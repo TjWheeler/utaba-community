@@ -309,7 +309,6 @@ export class FileOperations {
     
     checkOperationAllowed('createDir', this.config);
     const fullPath = validatePath(relativePath, this.config.sandboxRoot);
-    validateFilename(path.basename(fullPath), this.config);
     
     try {
       await fs.promises.mkdir(fullPath, { recursive: true });
