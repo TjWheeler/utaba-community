@@ -1,0 +1,51 @@
+{
+  "name": "utaba-community-sandboxfs",
+  "version": "1.0.0",
+  "description": "MCP Server for sandboxed file system access",
+  "main": "dist/index.js",
+  "type": "module",
+  "bin": {
+    "utaba-community-sandboxfs": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "prepare": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "filesystem",
+    "sandbox",
+    "model-context-protocol",
+    "claude",
+    "ai"
+  ],
+  "author": "Tim Wheeler",
+  "license": "BSD-3-Clause",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TjWheeler/utaba-community.git"
+  },
+  "bugs": {
+    "url": "https://github.com/TjWheeler/utaba-community/issues"
+  },
+  "homepage": "https://github.com/TjWheeler/utaba-community#readme",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "check-disk-space": "^3.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
