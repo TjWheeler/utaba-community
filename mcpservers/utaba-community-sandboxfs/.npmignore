@@ -1,0 +1,8 @@
+src/__tests__/
+src/test-utils/
+**/*.test.ts
+**/*.spec.ts
+*.test.js
+*.spec.js
+vitest.config.ts
+tsconfig.test.json
