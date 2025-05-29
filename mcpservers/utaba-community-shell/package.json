@@ -1,5 +1,5 @@
 {
-  "name": "utaba-community-mcp-shell",
+  "name": "utaba-community-shell",
   "version": "1.0.0",
   "description": "MCP Server for controlled command execution in trusted development environments",
   "main": "dist/index.js",

@@ -40,7 +40,7 @@ You'll need **Node.js** (version 18 or higher) installed on your computer. If yo
 ### Installation
 
 ```bash
-npm install -g utaba-community-mcp-shell
+npm install -g utaba-community-shell
 ```
 
 ### Setup with Claude Desktop
@@ -61,7 +61,7 @@ Note: This uses Windows style paths with 2 backslashes.  In Windows you need thi
      "mcpServers": {
        "mcp-shell": {
          "command": "npx",
-         "args": ["utaba-community-mcp-shell"],
+         "args": ["utaba-community-shell"],
          "env": {
            "START_DIRECTORY": "C:\\Users\\YourName\\my-project",
            "LOG_FILE": "C:\\temp\\mcp-shell.log",
@@ -353,7 +353,7 @@ Command Execution Report:
 ```bash
 # Clone and install dependencies
 git clone <repository>
-cd utaba-community-mcp-shell
+cd utaba-community-shell
 npm install
 
 # Build TypeScript
@@ -484,7 +484,7 @@ This project is licensed under the BSD-3-Clause License - see the [LICENSE](LICE
 ## ⚠️ **Ready to Take Control?**
 
 ```bash
-npm install -g utaba-community-mcp-shell
+npm install -g utaba-community-shell
 ```
 
 **Give Claude the power of the command line - trusted environment only!** 🚀
