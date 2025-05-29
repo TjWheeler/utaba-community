@@ -182,18 +182,18 @@ const TOOLS: Tool[] = [
     }
   },
   {
-    name: 'move_file',
-    description: 'Move or rename a file or directory',
+    name: 'move_item',
+    description: 'Move or rename a file or directory (including all contents for directories). Handles both same-parent renaming and cross-directory moves atomically.',
     inputSchema: {
       type: 'object',
       properties: {
         source: {
           type: 'string',
-          description: 'Source relative path'
+          description: 'Source relative path (file or directory)'
         },
         destination: {
           type: 'string',
-          description: 'Destination relative path'
+          description: 'Destination relative path (file or directory)'
         }
       },
       required: ['source', 'destination']
@@ -257,7 +257,7 @@ class SandboxFileSystemServer {
     this.server = new Server(
       {
         name: 'utaba-community-sandboxfs',
-        version: '1.1.0', // Bumped version for optimization
+        version: '1.2.0', // Updated version for move_item enhancement
       },
       {
         capabilities: {
@@ -336,8 +336,8 @@ class SandboxFileSystemServer {
             result = await this.handleDeleteDirectory(args);
             break;
             
-          case 'move_file':
-            result = await this.handleMoveFile(args);
+          case 'move_item':
+            result = await this.handleMoveItem(args);
             break;
             
           case 'copy_file':
@@ -600,13 +600,13 @@ class SandboxFileSystemServer {
     };
   }
   
-  private async handleMoveFile(args: any) {
+  private async handleMoveItem(args: any) {
     await this.fileOps!.moveFile(args.source, args.destination);
     return {
       content: [
         {
           type: 'text',
-          text: `Moved successfully: ${args.source} → ${args.destination}`
+          text: `Item moved successfully: ${args.source} → ${args.destination}`
         } as TextContent
       ]
     };
@@ -660,11 +660,11 @@ class SandboxFileSystemServer {
       // Set log level based on environment or config
       logger.setLevel(process.env.LOG_LEVEL === 'debug' ? LogLevel.DEBUG : LogLevel.INFO);
       
-      logger.info('Sandbox-FS', `Starting OPTIMIZED server v1.1.0 with root: ${config.sandboxRoot}`);
+      logger.info('Sandbox-FS', `Starting server v1.2.0 with root: ${config.sandboxRoot}`);
       logger.info('Sandbox-FS', `Quota: ${(config.quotaBytes / 1024 / 1024).toFixed(1)} MB`);
       logger.info('Sandbox-FS', `Binary ops: ${config.allowBinary ? 'enabled' : 'disabled'}`);
       logger.info('Sandbox-FS', `Allowed extensions: ${config.allowedExtensions.join(', ') || 'all'}`);
-      logger.info('Sandbox-FS', 'Optimizations: Smart content detection, reduced base64 overhead, improved performance');
+      logger.info('Sandbox-FS', 'Features: Smart content detection, atomic moves, optimized performance');
       
       // Log file logging status
       const loggerConfig = logger.getConfig();
@@ -689,7 +689,7 @@ class SandboxFileSystemServer {
       const transport = new StdioServerTransport();
       await this.server.connect(transport);
       
-      logger.info('Sandbox-FS', 'Optimized server running on stdio');
+      logger.info('Sandbox-FS', 'Server v1.2.0 running on stdio with move_item support');
     } catch (error) {
       logger.error('Sandbox-FS', 'Failed to start server', undefined, { 
         error: error instanceof Error ? error.message : 'Unknown error' 
