@@ -1,5 +1,6 @@
 import * as path from 'path';
 import { SandboxConfig } from './config.js';
+import { logger } from './logger.js';
 
 export class SecurityError extends Error {
   constructor(message: string) {
@@ -13,32 +14,42 @@ export class SecurityError extends Error {
  */
 export function checkFileExtension(filename: string, config: SandboxConfig): void {
   if (typeof filename !== 'string') {
-    throw new SecurityError('Filename must be a string');
+    const error = new SecurityError('Filename must be a string');
+    logger.logSecurity('Security', 'extensionCheck', filename, true, 'Invalid filename type');
+    throw error;
   }
   
   const ext = path.extname(filename).toLowerCase();
   
   // If no extension restrictions, allow
   if (config.allowedExtensions.length === 0 && config.blockedExtensions.length === 0) {
+    logger.logSecurity('Security', 'extensionCheck', filename, false, 'No restrictions configured');
     return;
   }
   
   // If whitelist is set, only allow those extensions
   if (config.allowedExtensions.length > 0) {
     if (!config.allowedExtensions.includes(ext)) {
-      throw new SecurityError(
+      const error = new SecurityError(
         `File extension "${ext}" is not in allowed list: ${config.allowedExtensions.join(', ')}`
       );
+      logger.logSecurity('Security', 'extensionCheck', filename, true, `Extension ${ext} not in whitelist`);
+      throw error;
     }
+    logger.logSecurity('Security', 'extensionCheck', filename, false, `Extension ${ext} allowed by whitelist`);
     return;
   }
   
   // Otherwise, check blacklist
   if (config.blockedExtensions.includes(ext)) {
-    throw new SecurityError(
+    const error = new SecurityError(
       `File extension "${ext}" is blocked for security reasons`
     );
+    logger.logSecurity('Security', 'extensionCheck', filename, true, `Extension ${ext} in blacklist`);
+    throw error;
   }
+  
+  logger.logSecurity('Security', 'extensionCheck', filename, false, `Extension ${ext} not in blacklist`);
 }
 
 /**
@@ -50,7 +61,9 @@ export function checkBinaryAllowed(filename: string, config: SandboxConfig, isBi
   }
   
   if (!config.allowBinary) {
-    throw new SecurityError('Binary file operations are not allowed');
+    const error = new SecurityError('Binary file operations are not allowed');
+    logger.logSecurity('Security', 'binaryCheck', filename, true, 'Binary operations disabled');
+    throw error;
   }
   
   // Additional check: some extensions should always be treated as binary
@@ -58,8 +71,12 @@ export function checkBinaryAllowed(filename: string, config: SandboxConfig, isBi
   const ext = path.extname(filename).toLowerCase();
   
   if (binaryExtensions.includes(ext) && !config.allowBinary) {
-    throw new SecurityError(`Binary operations required for ${ext} files but not allowed`);
+    const error = new SecurityError(`Binary operations required for ${ext} files but not allowed`);
+    logger.logSecurity('Security', 'binaryCheck', filename, true, `Binary required for ${ext} but disabled`);
+    throw error;
   }
+  
+  logger.logSecurity('Security', 'binaryCheck', filename, false, 'Binary operations allowed');
 }
 
 /**
@@ -72,15 +89,21 @@ export function checkBinaryAllowed(filename: string, config: SandboxConfig, isBi
 export function validatePath(requestedPath: string, sandboxRoot: string): string {
   // Type check
   if (typeof requestedPath !== 'string') {
-    throw new SecurityError('Path must be a string');
+    const error = new SecurityError('Path must be a string');
+    logger.logSecurity('Security', 'pathValidation', requestedPath, true, 'Invalid path type');
+    throw error;
   }
   
   if (typeof sandboxRoot !== 'string') {
-    throw new SecurityError('Sandbox root must be a string');
+    const error = new SecurityError('Sandbox root must be a string');
+    logger.logSecurity('Security', 'pathValidation', requestedPath, true, 'Invalid sandbox root type');
+    throw error;
   }
   
   if (!requestedPath) {
-    throw new SecurityError('Path cannot be empty');
+    const error = new SecurityError('Path cannot be empty');
+    logger.logSecurity('Security', 'pathValidation', requestedPath, true, 'Empty path');
+    throw error;
   }
 
   // Normalize the sandbox root to handle Windows vs Unix paths
@@ -97,9 +120,11 @@ export function validatePath(requestedPath: string, sandboxRoot: string): string
     : resolvedPath.startsWith(normalizedRoot);
     
   if (!pathStartsWithRoot) {
-    throw new SecurityError(
+    const error = new SecurityError(
       `Path traversal attempt detected. Path must be within sandbox: ${sandboxRoot}`
     );
+    logger.logSecurity('Security', 'pathValidation', requestedPath, true, 'Path traversal attempt');
+    throw error;
   }
   
   // Additional checks for suspicious patterns
@@ -111,10 +136,13 @@ export function validatePath(requestedPath: string, sandboxRoot: string): string
   const pathSegments = requestedPath.split(/[/\\]/);
   for (const segment of pathSegments) {
     if (suspiciousPatterns.some(pattern => pattern.test(segment))) {
-      throw new SecurityError(`Invalid path segment: ${segment}`);
+      const error = new SecurityError(`Invalid path segment: ${segment}`);
+      logger.logSecurity('Security', 'pathValidation', requestedPath, true, `Suspicious segment: ${segment}`);
+      throw error;
     }
   }
   
+  logger.logSecurity('Security', 'pathValidation', requestedPath, false, 'Path validated successfully');
   return resolvedPath;
 }
 
@@ -146,32 +174,44 @@ export function getRelativePath(fullPath: string, sandboxRoot: string): string {
 export function validateFilename(filename: string, config: SandboxConfig): void {
   // Type check
   if (typeof filename !== 'string') {
-    throw new SecurityError('Filename must be a string');
+    const error = new SecurityError('Filename must be a string');
+    logger.logSecurity('Security', 'filenameValidation', filename, true, 'Invalid filename type');
+    throw error;
   }
   
   if (!filename || filename.trim().length === 0) {
-    throw new SecurityError('Filename cannot be empty');
+    const error = new SecurityError('Filename cannot be empty');
+    logger.logSecurity('Security', 'filenameValidation', filename, true, 'Empty filename');
+    throw error;
   }
   
   // Check for invalid characters
   const invalidChars = /[<>:"|?*\0]/;
   if (invalidChars.test(filename)) {
-    throw new SecurityError('Filename contains invalid characters');
+    const error = new SecurityError('Filename contains invalid characters');
+    logger.logSecurity('Security', 'filenameValidation', filename, true, 'Invalid characters in filename');
+    throw error;
   }
   
   // Check for reserved names (Windows)
   const reservedNames = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/i;
   if (reservedNames.test(filename)) {
-    throw new SecurityError('Filename uses a reserved name');
+    const error = new SecurityError('Filename uses a reserved name');
+    logger.logSecurity('Security', 'filenameValidation', filename, true, 'Reserved filename');
+    throw error;
   }
   
   // Prevent hidden files unless explicitly allowed
   if (filename.startsWith('.') && filename !== '.mcp-quota.json') {
-    throw new SecurityError('Hidden files are not allowed');
+    const error = new SecurityError('Hidden files are not allowed');
+    logger.logSecurity('Security', 'filenameValidation', filename, true, 'Hidden file blocked');
+    throw error;
   }
   
   // Check file extension
   checkFileExtension(filename, config);
+  
+  logger.logSecurity('Security', 'filenameValidation', filename, false, 'Filename validated successfully');
 }
 
 /**
@@ -185,10 +225,16 @@ export function checkOperationAllowed(
   config: SandboxConfig
 ): void {
   if (operation === 'delete' && !config.allowDelete) {
-    throw new SecurityError('Delete operations are not allowed');
+    const error = new SecurityError('Delete operations are not allowed');
+    logger.logSecurity('Security', 'operationCheck', operation, true, 'Delete operations disabled');
+    throw error;
   }
   
   if ((operation === 'createDir' || operation === 'deleteDir') && !config.allowDirectoryOps) {
-    throw new SecurityError('Directory operations are not allowed');
+    const error = new SecurityError('Directory operations are not allowed');
+    logger.logSecurity('Security', 'operationCheck', operation, true, 'Directory operations disabled');
+    throw error;
   }
+  
+  logger.logSecurity('Security', 'operationCheck', operation, false, 'Operation allowed');
 }

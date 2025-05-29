@@ -1,7 +1,7 @@
 {
   "name": "utaba-community-sandboxfs",
-  "version": "1.0.0",
-  "description": "MCP Server for sandboxed file system access",
+  "version": "1.1.0",
+  "description": "MCP Server for LLM sandboxed file system access. Open Sourced from https://utaba.ai",
   "main": "dist/index.js",
   "type": "module",
   "bin": {
@@ -11,7 +11,13 @@
     "build": "tsc",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "test": "vitest",
+    "test:ui": "vitest --ui",
+    "test:debug": "vitest --inspect-brk --no-file-parallelism",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest --watch"
   },
   "keywords": [
     "mcp",
@@ -37,8 +43,10 @@
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "@vitest/ui": "^3.1.4",
     "tsx": "^4.0.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "vitest": "^3.1.4"
   },
   "files": [
     "dist",
