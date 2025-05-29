@@ -1,4 +1,5 @@
 # Utaba MCP Shell - Product Specification
+# Author: https://utaba.ai
 
 ## Overview
 
@@ -207,10 +208,3 @@ This tool trades security isolation for development workflow convenience and sho
 | 1.0 | 2025-05-29 | Development Team | Initial specification |
 | 1.1 | 2025-05-29 | Development Team | Updated security model to trusted environment approach |
 
-## Approval
-
-| Role | Name | Date | Signature |
-|---|---|---|---|
-| Product Owner | [Pending] | [Pending] | [Pending] |
-| Technical Lead | [Pending] | [Pending] | [Pending] |
-| Stakeholder | [Pending] | [Pending] | [Pending] |

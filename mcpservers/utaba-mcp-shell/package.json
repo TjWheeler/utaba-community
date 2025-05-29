@@ -1,5 +1,5 @@
 {
-  "name": "utaba-mcp-shell",
+  "name": "utaba-community-mcp-shell",
   "version": "1.0.0",
   "description": "MCP Server for controlled command execution in trusted development environments",
   "main": "dist/index.js",
@@ -33,16 +33,16 @@
     "claude",
     "ai"
   ],
-  "author": "Development Team",
+  "author": "Tim Wheeler",
   "license": "BSD-3-Clause",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-org/utaba-mcp-shell.git"
+    "url": "https://github.com/TjWheeler/utaba-community.git"
   },
   "bugs": {
-    "url": "https://github.com/your-org/utaba-mcp-shell/issues"
+    "url": "https://github.com/TjWheeler/utaba-community/issues"
   },
-  "homepage": "https://github.com/your-org/utaba-mcp-shell#readme",
+  "homepage": "https://github.com/TjWheeler/utaba-community#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",
     "zod": "^3.22.0",
@@ -58,8 +58,7 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE",
-    "config-templates"
+    "LICENSE"
   ],
   "engines": {
     "node": ">=18.0.0"

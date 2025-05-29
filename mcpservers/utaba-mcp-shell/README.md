@@ -1,4 +1,4 @@
-# Utaba MCP Shell
+# Utaba MCP Shell - https://utaba.ai
 
 A **development tooling** MCP (Model Context Protocol) server that provides **controlled command execution** for AI assistants like Claude. Think of it as a contolled, powerful command line where AI can run development commands without accessing your entire system.
 
@@ -40,7 +40,7 @@ You'll need **Node.js** (version 18 or higher) installed on your computer. If yo
 ### Installation
 
 ```bash
-npm install -g utaba-mcp-shell
+npm install -g utaba-community-mcp-shell
 ```
 
 ### Setup with Claude Desktop
@@ -60,8 +60,8 @@ Note: This uses Windows style paths with 2 backslashes.  In Windows you need thi
    {
      "mcpServers": {
        "mcp-shell": {
-         "command": "mcp-shell",
-         "args": [],
+         "command": "npx",
+         "args": ["utaba-community-mcp-shell"],
          "env": {
            "START_DIRECTORY": "C:\\Users\\YourName\\my-project",
            "LOG_FILE": "C:\\temp\\mcp-shell.log",
@@ -265,12 +265,12 @@ LOG_FORMAT="text"
 {
   "mcpServers": {
     "mcp-shell": {
-      "command": "mcp-shell",
-      "args": [],
+       "command": "node",
+      "args": ["C:\\path\\utaba-community-sandboxfs\\dist\\index.js"],
       "env": {
-        "START_DIRECTORY": "/home/dev/my-project",
-        "MCP_SHELL_CONFIG_PATH": "/home/dev/.mcp-shell-config.json",
-        "LOG_FILE": "/var/log/mcp-shell.log",
+        "START_DIRECTORY": "C:\\path\\my-project",
+        "MCP_SHELL_CONFIG_PATH": "C:\\path\\my-project\\.mcp-shell-config.json",
+        "LOG_FILE": "C:\\path\\my-project\\mcp-shell.log",
         "LOG_LEVEL": "info",
         "MCP_SHELL_MAX_CONCURRENT": "5"
       }
@@ -287,9 +287,9 @@ LOG_FORMAT="text"
       "command": "mcp-shell",
       "args": [],
       "env": {
-        "START_DIRECTORY": "/opt/project",
-        "MCP_SHELL_CONFIG_PATH": "/etc/mcp-shell.json",
-        "LOG_FILE": "/var/log/mcp-shell.log",
+        "START_DIRECTORY": "C:\\path\\my-project",
+        "MCP_SHELL_CONFIG_PATH": "C:\\path\\my-project\\.mcp-shell-config.json",
+        "LOG_FILE": "C:\\path\\my-project\\mcp-shell.log",
         "LOG_LEVEL": "info",
         "LOG_MAX_SIZE_MB": "50",
         "LOG_ROTATION_STRATEGY": "rotate",
@@ -353,7 +353,7 @@ Command Execution Report:
 ```bash
 # Clone and install dependencies
 git clone <repository>
-cd utaba-mcp-shell
+cd utaba-community-mcp-shell
 npm install
 
 # Build TypeScript
@@ -484,10 +484,10 @@ This project is licensed under the BSD-3-Clause License - see the [LICENSE](LICE
 ## ⚠️ **Ready to Take Control?**
 
 ```bash
-npm install -g utaba-mcp-shell
+npm install -g utaba-community-mcp-shell
 ```
 
-**Give Claude the power of the command line - safely and securely!** 🚀
+**Give Claude the power of the command line - trusted environment only!** 🚀
 
 ---
 
