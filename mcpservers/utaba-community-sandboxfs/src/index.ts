@@ -8,14 +8,14 @@ import {
   ErrorCode,
   McpError
 } from '@modelcontextprotocol/sdk/types.js';
-import { loadConfig, validateConfig } from './config.js';  // Add .js extension
-import { QuotaManager } from './quota.js';  // Add .js extension
-import { FileOperations } from './fileOperations.js';  // Add .js extension
-import { SecurityError } from './security.js';  // Add .js extension
-import { QuotaError } from './quota.js';  // Add .js extension
+import { loadConfig, validateConfig } from './config.js';
+import { QuotaManager } from './quota.js';
+import { FileOperations } from './fileOperations.js';
+import { SecurityError } from './security.js';
+import { QuotaError } from './quota.js';
+import { logger, LogLevel, PerformanceTimer } from './logger.js';
 
-// Define our tools metadata
-// This tells the AI what functions are available and how to use them
+// Define our tools metadata - now with enhanced read_file tool
 const TOOLS: Tool[] = [
   {
     name: 'get_quota_status',
@@ -23,6 +23,37 @@ const TOOLS: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {},
+      required: []
+    }
+  },
+  {
+    name: 'get_logs',
+    description: 'View recent log entries from the MCP server for debugging and monitoring',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        level: {
+          type: 'string',
+          description: 'Minimum log level to show (DEBUG, INFO, WARN, ERROR)',
+          enum: ['DEBUG', 'INFO', 'WARN', 'ERROR'],
+          default: 'INFO'
+        },
+        component: {
+          type: 'string',
+          description: 'Filter by component (e.g., "FileOps", "Security", "MCP-Server")',
+        },
+        operation: {
+          type: 'string',
+          description: 'Filter by operation (e.g., "writeFile", "readFile", "pathValidation")',
+        },
+        count: {
+          type: 'number',
+          description: 'Number of recent log entries to return (max 100)',
+          default: 20,
+          minimum: 1,
+          maximum: 100
+        }
+      },
       required: []
     }
   },
@@ -43,7 +74,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'read_file',
-    description: 'Read contents of a file',
+    description: 'Read contents of a file with automatic content type detection and optimized encoding. Text files are returned as UTF-8, binary files as base64.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -53,9 +84,8 @@ const TOOLS: Tool[] = [
         },
         encoding: {
           type: 'string',
-          description: 'Encoding: utf-8, base64, or binary (returns base64)',
+          description: 'Optional encoding override: utf-8 for text, base64 for binary. If not specified, optimal encoding is auto-detected.',
           enum: ['utf-8', 'base64', 'binary'],
-          default: 'utf-8'
         }
       },
       required: ['path']
@@ -63,7 +93,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'write_file',
-    description: 'Write content to a file (creates or overwrites)',
+    description: 'Write content to a file (creates or overwrites) with automatic content type detection',
     inputSchema: {
       type: 'object',
       properties: {
@@ -77,7 +107,7 @@ const TOOLS: Tool[] = [
         },
         encoding: {
           type: 'string',
-          description: 'Encoding: utf-8 or base64',
+          description: 'Encoding: utf-8 for text content or base64 for binary content',
           enum: ['utf-8', 'base64'],
           default: 'utf-8'
         }
@@ -227,18 +257,18 @@ class SandboxFileSystemServer {
     this.server = new Server(
       {
         name: 'utaba-community-sandboxfs',
-        version: '1.0.0',
+        version: '1.1.0', // Bumped version for optimization
       },
       {
         capabilities: {
-          tools: {} // We only provide tools, no resources or prompts
+          tools: {}
         }
       }
     );
     
     // Set up error handling
     this.server.onerror = (error) => {
-      console.error('[MCP Server Error]', error);
+      logger.error('MCP-Server', 'Server error occurred', undefined, { error: error.message });
     };
     
     this.setupHandlers();
@@ -246,15 +276,15 @@ class SandboxFileSystemServer {
   
   private setupHandlers() {
     // Handler for listing available tools
-    // This is called when the AI wants to know what tools are available
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
+      logger.debug('MCP-Server', 'Tools list requested');
       return { tools: TOOLS };
     });
     
     // Handler for calling tools
-    // This is where the actual work happens when the AI calls a tool
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       if (!this.fileOps) {
+        logger.error('MCP-Server', 'Server not properly initialized');
         throw new McpError(
           ErrorCode.InternalError,
           'Server not properly initialized'
@@ -262,45 +292,65 @@ class SandboxFileSystemServer {
       }
       
       const { name, arguments: args } = request.params;
+      const timer = new PerformanceTimer('MCP-Server', name);
+      
+      logger.info('MCP-Server', `Tool called: ${name}`, name, { args });
       
       try {
         // Route to appropriate handler based on tool name
+        let result;
         switch (name) {
           case 'get_quota_status':
-            return await this.handleGetQuotaStatus();
+            result = await this.handleGetQuotaStatus();
+            break;
+            
+          case 'get_logs':
+            result = await this.handleGetLogs(args);
+            break;
             
           case 'list_directory':
-            return await this.handleListDirectory(args);
+            result = await this.handleListDirectory(args);
+            break;
             
           case 'read_file':
-            return await this.handleReadFile(args);
+            result = await this.handleReadFile(args);
+            break;
             
           case 'write_file':
-            return await this.handleWriteFile(args);
+            result = await this.handleWriteFile(args);
+            break;
             
           case 'append_file':
-            return await this.handleAppendFile(args);
+            result = await this.handleAppendFile(args);
+            break;
             
           case 'delete_file':
-            return await this.handleDeleteFile(args);
+            result = await this.handleDeleteFile(args);
+            break;
             
           case 'create_directory':
-            return await this.handleCreateDirectory(args);
+            result = await this.handleCreateDirectory(args);
+            break;
             
           case 'delete_directory':
-            return await this.handleDeleteDirectory(args);
+            result = await this.handleDeleteDirectory(args);
+            break;
             
           case 'move_file':
-            return await this.handleMoveFile(args);
+            result = await this.handleMoveFile(args);
+            break;
             
           case 'copy_file':
-            return await this.handleCopyFile(args);
+            result = await this.handleCopyFile(args);
+            break;
             
           case 'exists':
-            return await this.handleExists(args);
+            result = await this.handleExists(args);
+            break;
             
           case 'get_file_info':
-            return await this.handleGetFileInfo(args);
+            result = await this.handleGetFileInfo(args);
+            break;
             
           default:
             throw new McpError(
@@ -308,14 +358,25 @@ class SandboxFileSystemServer {
               `Unknown tool: ${name}`
             );
         }
+        
+        timer.end(true, { tool: name });
+        logger.info('MCP-Server', `Tool completed successfully: ${name}`, name);
+        return result;
+        
       } catch (error) {
+        timer.end(false, { tool: name, error: error instanceof Error ? error.message : 'Unknown error' });
+        
         // Convert our custom errors to MCP errors
         if (error instanceof SecurityError || error instanceof QuotaError) {
+          logger.warn('MCP-Server', `Tool failed with validation error: ${name}`, name, { error: error.message });
           throw new McpError(ErrorCode.InvalidRequest, error.message);
         }
         if (error instanceof Error) {
+          logger.error('MCP-Server', `Tool failed with error: ${name}`, name, { error: error.message });
           throw new McpError(ErrorCode.InternalError, error.message);
         }
+        
+        logger.error('MCP-Server', `Tool failed with unknown error: ${name}`, name, { error });
         throw error;
       }
     });
@@ -339,6 +400,79 @@ class SandboxFileSystemServer {
     };
   }
   
+  private async handleGetLogs(args: any) {
+    const {
+      level = 'INFO',
+      component,
+      operation,
+      count = 20
+    } = args;
+
+    // Convert string level to LogLevel enum
+    const logLevel = LogLevel[level as keyof typeof LogLevel];
+    if (logLevel === undefined) {
+      throw new McpError(ErrorCode.InvalidRequest, `Invalid log level: ${level}`);
+    }
+
+    // Get filtered logs
+    const filters: any = { level: logLevel };
+    if (component) filters.component = component;
+    if (operation) filters.operation = operation;
+
+    const logs = logger.getFilteredLogs(filters).slice(-count);
+
+    // Format logs for display
+    const formattedLogs = logs.map(entry => {
+      const timestamp = entry.timestamp.substring(11, 23); // HH:MM:SS.sss
+      const levelStr = LogLevel[entry.level].padEnd(5);
+      const operation = entry.operation ? ` [${entry.operation}]` : '';
+      
+      let output = `${timestamp} ${levelStr} [${entry.component}]${operation} ${entry.message}`;
+      
+      if (entry.performance) {
+        const perf = entry.performance;
+        const perfStr = [
+          perf.duration ? `${perf.duration}ms` : null,
+          perf.fileSize ? `${(perf.fileSize / 1024).toFixed(1)}KB` : null,
+          perf.quotaUsed ? `quota: ${perf.quotaUsed}%` : null
+        ].filter(Boolean).join(', ');
+        
+        if (perfStr) output += ` (${perfStr})`;
+      }
+
+      if (entry.security) {
+        const sec = entry.security;
+        output += ` [SECURITY:${sec.blocked ? 'BLOCKED' : 'ALLOWED'}]`;
+        if (sec.reason) output += ` ${sec.reason}`;
+      }
+
+      if (entry.metadata && Object.keys(entry.metadata).length > 0) {
+        output += ` ${JSON.stringify(entry.metadata)}`;
+      }
+
+      return output;
+    });
+
+    const summary = {
+      totalEntries: logs.length,
+      filters: { level, component, operation },
+      oldestEntry: logs.length > 0 ? logs[0].timestamp : null,
+      newestEntry: logs.length > 0 ? logs[logs.length - 1].timestamp : null
+    };
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `MCP Server Logs (${count} most recent entries, level: ${level}+)\n` +
+                `Filters: ${JSON.stringify(filters, null, 2)}\n` +
+                `Summary: ${JSON.stringify(summary, null, 2)}\n\n` +
+                `Recent Log Entries:\n${formattedLogs.join('\n')}`
+        } as TextContent
+      ]
+    };
+  }
+  
   private async handleListDirectory(args: any) {
     const listing = await this.fileOps!.listDirectory(args.path || '');
     return {
@@ -351,20 +485,58 @@ class SandboxFileSystemServer {
     };
   }
   
+  /**
+   * OPTIMIZED: Use smart content detection and avoid forced base64 for text files
+   */
   private async handleReadFile(args: any) {
-    const content = await this.fileOps!.readFile(args.path, args.encoding);
-    return {
-      content: [
-        {
-          type: 'text',
-          text: typeof content === 'string' ? content : content.toString('base64')
-        } as TextContent
-      ]
-    };
+    const timer = new PerformanceTimer('MCP-Server', 'handleReadFile');
+    
+    try {
+      // Use the optimized readFileWithMetadata method
+      const result = await this.fileOps!.readFileWithMetadata(args.path, args.encoding);
+      
+      timer.endWithFileSize(result.size, true);
+      
+      // Log the optimization benefit
+      const isOptimized = result.encoding === 'utf-8' && !result.isBinary;
+      logger.info('MCP-Server', `Read file optimized: ${args.path}`, 'handleReadFile', {
+        size: result.size,
+        encoding: result.encoding,
+        contentType: result.contentType,
+        isOptimized,
+        sizeSavings: isOptimized ? '~25%' : 'none'
+      });
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: result.content  // No forced base64 conversion!
+          } as TextContent
+        ],
+        // Include metadata for debugging and client optimization
+        _meta: {
+          encoding: result.encoding,
+          contentType: result.contentType,
+          size: result.size,
+          isBinary: result.isBinary,
+          optimized: isOptimized
+        }
+      };
+    } catch (error) {
+      timer.end(false, { error: error instanceof Error ? error.message : 'Unknown error' });
+      throw error;
+    }
   }
   
   private async handleWriteFile(args: any) {
+    const timer = new PerformanceTimer('MCP-Server', 'handleWriteFile');
     await this.fileOps!.writeFile(args.path, args.content, args.encoding);
+    
+    // Calculate file size for performance logging
+    const fileSize = Buffer.byteLength(args.content, args.encoding === 'base64' ? 'base64' : 'utf8');
+    timer.endWithFileSize(fileSize, true);
+    
     return {
       content: [
         {
@@ -376,7 +548,12 @@ class SandboxFileSystemServer {
   }
   
   private async handleAppendFile(args: any) {
+    const timer = new PerformanceTimer('MCP-Server', 'handleAppendFile');
     await this.fileOps!.appendFile(args.path, args.content, args.encoding);
+    
+    const fileSize = Buffer.byteLength(args.content, args.encoding === 'base64' ? 'base64' : 'utf8');
+    timer.endWithFileSize(fileSize, true);
+    
     return {
       content: [
         {
@@ -477,9 +654,26 @@ class SandboxFileSystemServer {
       const config = loadConfig();
       await validateConfig(config);
       
-      console.error(`[Sandbox FS] Starting with root: ${config.sandboxRoot}`);
-      console.error(`[Sandbox FS] Quota: ${config.quotaBytes / 1024 / 1024} MB`);
-      console.error(`[Sandbox FS] Binary ops: ${config.allowBinary ? 'enabled' : 'disabled'}`);
+      // Initialize logger with file support
+      await logger.initialize();
+      
+      // Set log level based on environment or config
+      logger.setLevel(process.env.LOG_LEVEL === 'debug' ? LogLevel.DEBUG : LogLevel.INFO);
+      
+      logger.info('Sandbox-FS', `Starting OPTIMIZED server v1.1.0 with root: ${config.sandboxRoot}`);
+      logger.info('Sandbox-FS', `Quota: ${(config.quotaBytes / 1024 / 1024).toFixed(1)} MB`);
+      logger.info('Sandbox-FS', `Binary ops: ${config.allowBinary ? 'enabled' : 'disabled'}`);
+      logger.info('Sandbox-FS', `Allowed extensions: ${config.allowedExtensions.join(', ') || 'all'}`);
+      logger.info('Sandbox-FS', 'Optimizations: Smart content detection, reduced base64 overhead, improved performance');
+      
+      // Log file logging status
+      const loggerConfig = logger.getConfig();
+      if (loggerConfig.logFile) {
+        logger.info('Sandbox-FS', `File logging enabled: ${loggerConfig.logFile}`);
+        logger.info('Sandbox-FS', `Log rotation: ${loggerConfig.rotationStrategy}, max size: ${loggerConfig.maxSizeMB}MB`);
+      } else {
+        logger.info('Sandbox-FS', 'File logging disabled - logs only in memory');
+      }
       
       // Initialize quota manager and file operations
       const quotaManager = new QuotaManager(config);
@@ -487,19 +681,35 @@ class SandboxFileSystemServer {
       
       this.fileOps = new FileOperations(config, quotaManager);
       
+      // Set up graceful shutdown
+      process.on('SIGTERM', this.shutdown.bind(this));
+      process.on('SIGINT', this.shutdown.bind(this));
+      
       // Start the server using stdio transport
-      // This means communication happens via stdin/stdout
       const transport = new StdioServerTransport();
       await this.server.connect(transport);
       
-      console.error('[Sandbox FS] Server running on stdio');
+      logger.info('Sandbox-FS', 'Optimized server running on stdio');
     } catch (error) {
-      console.error('[Sandbox FS] Failed to start:', error);
+      logger.error('Sandbox-FS', 'Failed to start server', undefined, { 
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      });
       process.exit(1);
     }
+  }
+  
+  private async shutdown(): Promise<void> {
+    logger.info('Sandbox-FS', 'Shutting down server gracefully');
+    await logger.shutdown();
+    process.exit(0);
   }
 }
 
 // Start the server
 const server = new SandboxFileSystemServer();
-server.run().catch(console.error);
+server.run().catch((error) => {
+  logger.error('Sandbox-FS', 'Server crashed', undefined, { 
+    error: error instanceof Error ? error.message : 'Unknown error' 
+  });
+  console.error(error);
+});

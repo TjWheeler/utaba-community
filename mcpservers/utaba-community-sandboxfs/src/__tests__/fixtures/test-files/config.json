@@ -1,0 +1,9 @@
+{
+  "name": "test-config",
+  "version": "1.0.0",
+  "nested": {
+    "array": [1, 2, 3],
+    "boolean": true,
+    "null": null
+  }
+}

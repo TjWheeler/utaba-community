@@ -4,6 +4,9 @@ node_modules/
 # Build output
 dist/
 
+# packages
+*.tgz
+
 # IDE
 .vscode/
 .idea/
@@ -23,3 +26,4 @@ npm-debug.log*
 # Test sandbox (if you create one for testing)
 test-sandbox/
 mcp-sandbox/
+html/
