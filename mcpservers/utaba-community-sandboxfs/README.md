@@ -4,7 +4,7 @@ A **high-performance, secure, production-ready** MCP (Model Context Protocol) se
 
 ## 🚀 **NEW: Performance Optimizations!**
 
-**Version 1.1.0** delivers major performance improvements:
+**Version 1.2.0** delivers major performance improvements:
 
 - **⚡ 25-33% faster** text file operations (no more base64 overhead!)
 - **🧠 50% less memory usage** with smart encoding

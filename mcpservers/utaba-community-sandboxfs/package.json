@@ -1,6 +1,6 @@
 {
   "name": "utaba-community-sandboxfs",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "MCP Server for LLM sandboxed file system access. Open Sourced from https://utaba.ai",
   "main": "dist/index.js",
   "type": "module",
