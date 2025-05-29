@@ -526,13 +526,10 @@ class MCPShellServer {
   }
 }
 
-// Start the server if this file is run directly
-if (import.meta.url === `file://${process.argv[1]}`) {
   const server = new MCPShellServer();
   server.run().catch((error) => {
     console.error('Server crashed:', error);
     process.exit(1);
   });
-}
 
 export { MCPShellServer };

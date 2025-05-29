@@ -68,7 +68,7 @@ export interface EnvironmentOverrides {
 export const DEFAULT_CONFIGS = {
   minimal: {
     projectRoots: [process.cwd()],
-    trustedEnvironment: false,
+    trustedEnvironment: true,
     defaultTimeout: 30000,
     maxConcurrentCommands: 3,
     allowedCommands: [
@@ -94,7 +94,7 @@ export const DEFAULT_CONFIGS = {
   },
   nodejs: {
     projectRoots: [process.cwd()],
-    trustedEnvironment: false,
+    trustedEnvironment: true,
     defaultTimeout: 30000,
     maxConcurrentCommands: 3,
     allowedCommands: [
