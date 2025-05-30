@@ -15,10 +15,10 @@ import { SecurityError } from './security.js';
 import { QuotaError } from './quota.js';
 import { logger, LogLevel, PerformanceTimer } from './logger.js';
 
-// Define our tools metadata - now with enhanced read_file tool
+// Define our tools metadata - now with MCP standard namespaced names
 const TOOLS: Tool[] = [
   {
-    name: 'get_quota_status',
+    name: 'mcp_sandboxfs_get_quota_status',
     description: 'Get current quota usage and available space',
     inputSchema: {
       type: 'object',
@@ -27,7 +27,7 @@ const TOOLS: Tool[] = [
     }
   },
   {
-    name: 'get_logs',
+    name: 'mcp_sandboxfs_get_logs',
     description: 'View recent log entries from the MCP server for debugging and monitoring',
     inputSchema: {
       type: 'object',
@@ -58,7 +58,7 @@ const TOOLS: Tool[] = [
     }
   },
   {
-    name: 'list_directory',
+    name: 'mcp_sandboxfs_list_directory',
     description: 'List files and directories in a given path',
     inputSchema: {
       type: 'object',
@@ -73,7 +73,7 @@ const TOOLS: Tool[] = [
     }
   },
   {
-    name: 'read_file',
+    name: 'mcp_sandboxfs_read_file',
     description: 'Read contents of a file with automatic content type detection and optimized encoding. Text files are returned as UTF-8, binary files as base64.',
     inputSchema: {
       type: 'object',
@@ -92,7 +92,7 @@ const TOOLS: Tool[] = [
     }
   },
   {
-    name: 'write_file',
+    name: 'mcp_sandboxfs_write_file',
     description: 'Write content to a file (creates or overwrites) with automatic content type detection',
     inputSchema: {
       type: 'object',
@@ -116,7 +116,7 @@ const TOOLS: Tool[] = [
     }
   },
   {
-    name: 'append_file',
+    name: 'mcp_sandboxfs_append_file',
     description: 'Append content to an existing file',
     inputSchema: {
       type: 'object',
@@ -140,7 +140,7 @@ const TOOLS: Tool[] = [
     }
   },
   {
-    name: 'delete_file',
+    name: 'mcp_sandboxfs_delete_file',
     description: 'Delete a file',
     inputSchema: {
       type: 'object',
@@ -154,7 +154,7 @@ const TOOLS: Tool[] = [
     }
   },
   {
-    name: 'create_directory',
+    name: 'mcp_sandboxfs_create_directory',
     description: 'Create a new directory',
     inputSchema: {
       type: 'object',
@@ -168,7 +168,7 @@ const TOOLS: Tool[] = [
     }
   },
   {
-    name: 'delete_directory',
+    name: 'mcp_sandboxfs_delete_directory',
     description: 'Delete an empty directory',
     inputSchema: {
       type: 'object',
@@ -182,7 +182,7 @@ const TOOLS: Tool[] = [
     }
   },
   {
-    name: 'move_item',
+    name: 'mcp_sandboxfs_move_item',
     description: 'Move or rename a file or directory (including all contents for directories). Handles both same-parent renaming and cross-directory moves atomically.',
     inputSchema: {
       type: 'object',
@@ -200,7 +200,7 @@ const TOOLS: Tool[] = [
     }
   },
   {
-    name: 'copy_file',
+    name: 'mcp_sandboxfs_copy_file',
     description: 'Copy a file',
     inputSchema: {
       type: 'object',
@@ -218,7 +218,7 @@ const TOOLS: Tool[] = [
     }
   },
   {
-    name: 'exists',
+    name: 'mcp_sandboxfs_exists',
     description: 'Check if a file or directory exists',
     inputSchema: {
       type: 'object',
@@ -232,7 +232,7 @@ const TOOLS: Tool[] = [
     }
   },
   {
-    name: 'get_file_info',
+    name: 'mcp_sandboxfs_get_file_info',
     description: 'Get detailed information about a file or directory',
     inputSchema: {
       type: 'object',
@@ -257,7 +257,7 @@ class SandboxFileSystemServer {
     this.server = new Server(
       {
         name: 'utaba-community-sandboxfs',
-        version: '1.2.0', // Updated version for move_item enhancement
+        version: '1.3.0', // Updated version for MCP standard compliance
       },
       {
         capabilities: {
@@ -300,55 +300,55 @@ class SandboxFileSystemServer {
         // Route to appropriate handler based on tool name
         let result;
         switch (name) {
-          case 'get_quota_status':
+          case 'mcp_sandboxfs_get_quota_status':
             result = await this.handleGetQuotaStatus();
             break;
             
-          case 'get_logs':
+          case 'mcp_sandboxfs_get_logs':
             result = await this.handleGetLogs(args);
             break;
             
-          case 'list_directory':
+          case 'mcp_sandboxfs_list_directory':
             result = await this.handleListDirectory(args);
             break;
             
-          case 'read_file':
+          case 'mcp_sandboxfs_read_file':
             result = await this.handleReadFile(args);
             break;
             
-          case 'write_file':
+          case 'mcp_sandboxfs_write_file':
             result = await this.handleWriteFile(args);
             break;
             
-          case 'append_file':
+          case 'mcp_sandboxfs_append_file':
             result = await this.handleAppendFile(args);
             break;
             
-          case 'delete_file':
+          case 'mcp_sandboxfs_delete_file':
             result = await this.handleDeleteFile(args);
             break;
             
-          case 'create_directory':
+          case 'mcp_sandboxfs_create_directory':
             result = await this.handleCreateDirectory(args);
             break;
             
-          case 'delete_directory':
+          case 'mcp_sandboxfs_delete_directory':
             result = await this.handleDeleteDirectory(args);
             break;
             
-          case 'move_item':
+          case 'mcp_sandboxfs_move_item':
             result = await this.handleMoveItem(args);
             break;
             
-          case 'copy_file':
+          case 'mcp_sandboxfs_copy_file':
             result = await this.handleCopyFile(args);
             break;
             
-          case 'exists':
+          case 'mcp_sandboxfs_exists':
             result = await this.handleExists(args);
             break;
             
-          case 'get_file_info':
+          case 'mcp_sandboxfs_get_file_info':
             result = await this.handleGetFileInfo(args);
             break;
             
@@ -660,11 +660,11 @@ class SandboxFileSystemServer {
       // Set log level based on environment or config
       logger.setLevel(process.env.LOG_LEVEL === 'debug' ? LogLevel.DEBUG : LogLevel.INFO);
       
-      logger.info('Sandbox-FS', `Starting server v1.2.0 with root: ${config.sandboxRoot}`);
+      logger.info('Sandbox-FS', `Starting server v1.3.0 with root: ${config.sandboxRoot}`);
       logger.info('Sandbox-FS', `Quota: ${(config.quotaBytes / 1024 / 1024).toFixed(1)} MB`);
       logger.info('Sandbox-FS', `Binary ops: ${config.allowBinary ? 'enabled' : 'disabled'}`);
       logger.info('Sandbox-FS', `Allowed extensions: ${config.allowedExtensions.join(', ') || 'all'}`);
-      logger.info('Sandbox-FS', 'Features: Smart content detection, atomic moves, optimized performance');
+      logger.info('Sandbox-FS', 'Features: Smart content detection, atomic moves, optimized performance, MCP standard naming');
       
       // Log file logging status
       const loggerConfig = logger.getConfig();
@@ -689,7 +689,7 @@ class SandboxFileSystemServer {
       const transport = new StdioServerTransport();
       await this.server.connect(transport);
       
-      logger.info('Sandbox-FS', 'Server v1.2.0 running on stdio with move_item support');
+      logger.info('Sandbox-FS', 'Server v1.3.0 running on stdio with MCP standard tool naming');
     } catch (error) {
       logger.error('Sandbox-FS', 'Failed to start server', undefined, { 
         error: error instanceof Error ? error.message : 'Unknown error' 

@@ -4,13 +4,14 @@ A **high-performance, secure, production-ready** MCP (Model Context Protocol) se
 
 ## 🚀 **NEW: Performance Optimizations!**
 
-**Version 1.1.0** delivers major performance improvements:
+**Version 1.3.0** delivers major performance improvements and MCP standard compliance:
 
 - **⚡ 25-33% faster** text file operations (no more base64 overhead!)
 - **🧠 50% less memory usage** with smart encoding
 - **🎯 Smart content detection** - automatically optimizes encoding
 - **📈 40-60% CPU reduction** for text files
 - **🔍 Enhanced file type detection** using magic numbers + heuristics
+- **🛡️ MCP Standard Compliance** - namespaced tool names prevent conflicts
 
 ### **Real Performance Impact**
 - **10KB text file**: Was 13.3KB → Now 10KB (**25% smaller!**)
@@ -27,7 +28,7 @@ A **high-performance, secure, production-ready** MCP (Model Context Protocol) se
 - **🛡️ Production Ready** - Includes quota management, error handling, and performance monitoring
 - **🛠️ Easy Setup** - Simple installation with environment variable configuration
 - **🔍 Real-time Insights** - Built-in log viewer accessible through Claude
-- **🔄 Zero Breaking Changes** - Fully backwards compatible upgrade
+- **📛 MCP Standard Compliance** - Namespaced tools prevent conflicts with other servers
 
 ## 🚀 Quick Start
 
@@ -129,22 +130,33 @@ Once configured, Claude can help you with **blazing-fast** file operations:
 - **Performance Monitoring**: Track operation timing and optimization gains
 - **Content Type Tracking**: Monitor file type detection accuracy
 
-## 📋 Available Commands
+## 📋 MCP Functions
 
-When Claude uses the sandbox, these **optimized** operations are available:
+These **optimized** operations are available with **MCP standard naming**:
 
-| Command | Description | Performance Benefit |
-|---------|-------------|-------------------|
-| `list_directory` | Show files and folders | Enhanced metadata |
-| `read_file` | **⚡ Optimized** file reading | **25-33% faster for text** |
-| `write_file` | **🎯 Smart** file writing | Auto content-type detection |
-| `append_file` | Add content to files | Optimized encoding |
-| `delete_file` | Remove files | Enhanced validation |
-| `create_directory` | Make new folders | Faster operations |
-| `move_file` | Move or rename files | Improved error handling |
-| `copy_file` | Duplicate files | Smart content preservation |
-| `get_quota_status` | Check storage usage | Real-time metrics |
-| `get_logs` | View operation logs | **Performance insights** |
+| Function | Description |
+|----------|-------------|
+| `mcp_sandboxfs_list_directory` | List files and folders in a directory |
+| `mcp_sandboxfs_read_file` | Read file contents with smart encoding detection |
+| `mcp_sandboxfs_write_file` | Create or overwrite file with content |
+| `mcp_sandboxfs_append_file` | Add content to the end of an existing file |
+| `mcp_sandboxfs_delete_file` | Remove a file from the sandbox |
+| `mcp_sandboxfs_create_directory` | Create a new directory |
+| `mcp_sandboxfs_delete_directory` | Remove an empty directory |
+| `mcp_sandboxfs_move_item` | Move or rename files and directories |
+| `mcp_sandboxfs_copy_file` | Duplicate a file to a new location |
+| `mcp_sandboxfs_exists` | Check if a file or directory exists |
+| `mcp_sandboxfs_get_file_info` | Get detailed metadata about a file or directory |
+| `mcp_sandboxfs_get_quota_status` | View current storage usage and limits |
+| `mcp_sandboxfs_get_logs` | Access server operation logs and performance metrics |
+
+### **MCP Standard Compliance**
+
+All tool names follow the MCP standard format `mcp_<server>_<tool_name>` to:
+- **Prevent conflicts** with other MCP servers
+- **Ensure clear tool origin** for debugging
+- **Follow community best practices**
+- **Support multiple MCP servers** running simultaneously
 
 ---
 
@@ -175,6 +187,7 @@ npm run test:watch
 ```
 
 ### Test Coverage
+Note: Currently some tests that have been auto generated are failing. This will be addressed as time permits.
 
 The test suite provides comprehensive coverage across:
 
@@ -322,26 +335,13 @@ LOG_LEVEL="info"
 
 ### **Built-in Performance Analytics**
 
-Ask Claude to show you optimization metrics:
+Ask Claude to show you optimization metrics using the namespaced tools:
 
 ```
 "Show me recent file operations with performance data"
 "How much have the optimizations improved performance?"
 "Display file type detection accuracy"
 "What's my storage usage and transfer efficiency?"
-```
-
-### **Enhanced Log Viewer**
-
-The new optimized server provides detailed performance insights:
-
-**Performance Log Example:**
-```
-20:15:42.123 INFO  [FileOps] [readFile] File read optimized: large-data.json 
-    (size: 25KB, encoding: utf-8, isOptimized: true, sizeSavings: ~25%)
-20:15:42.125 INFO  [FileOps] [readFile] Smart detection: document.pdf 
-    (size: 2MB, encoding: base64, contentType: application/pdf, isBinary: true)
-20:15:45.200 INFO  [MCP-Server] [handleReadFile] Performance gain: 67ms → 23ms (65% faster)
 ```
 
 ### **Content Type Detection Analytics**
@@ -419,6 +419,10 @@ node test-optimization.mjs
 - Ensure the file extension is in the allowed list
 - Content detection works regardless of extension restrictions
 
+**"Tool name conflicts"**
+- With v1.3.0+ using MCP standard naming, conflicts are eliminated
+- All tools are prefixed with `mcp_sandboxfs_` to prevent collisions
+
 ### **Performance Debug Mode**
 
 Enable detailed performance logging:
@@ -433,27 +437,68 @@ This will show:
 - **Size reduction calculations**
 - **Memory usage improvements**
 
-## 🚀 **Migration Guide**
+## 📋 Logging Implementation
 
-### **Upgrading from v1.0.x**
+This project implements a comprehensive, enterprise-grade logging system built on TypeScript with the following characteristics:
 
-The optimized version is **100% backwards compatible**:
+### **Logging Architecture**
+- **Singleton Pattern**: Single logger instance across the application (`Logger.getInstance()`)
+- **Structured Logging**: JSON and text output formats with consistent schema
+- **File Rotation**: Automatic log rotation with configurable size limits and backup retention
+- **Performance Integration**: Built-in timing and metrics collection
+- **Real-time Access**: In-memory log history with filtering capabilities
 
-1. **Update the package**: `npm update -g utaba-community-sandboxfs`
-2. **Restart Claude Desktop**: No configuration changes needed
-3. **Enjoy the performance boost**: Everything works faster automatically!
+### **Environment Variables**
+```bash
+# Core logging configuration
+LOG_FILE="/path/to/mcp-server.log"           # File logging location
+LOG_LEVEL="INFO"                             # DEBUG, INFO, WARN, ERROR
+LOG_FORMAT="text"                            # text or json
+LOG_MAX_SIZE_MB="10"                         # Size before rotation
+LOG_ROTATION_STRATEGY="rotate"               # rotate or truncate
+LOG_KEEP_FILES="3"                           # Backup files to retain
+```
 
-### **What Changed**
-- ✅ **Faster**: 25-33% improvement for text files
-- ✅ **Smarter**: Automatic content type detection
-- ✅ **Compatible**: All existing functionality preserved
-- ✅ **Enhanced**: Better logging and monitoring
+### **Log Structure**
+Each log entry contains:
+- **Timestamp** (ISO 8601 format)
+- **Level** (DEBUG/INFO/WARN/ERROR)
+- **Component** (source module/service)
+- **Operation** (specific method/function)
+- **Message** (human-readable description)
+- **Performance Metrics** (duration, file sizes, quota usage)
+- **Security Context** (blocked operations, validation results)
+- **Metadata** (additional structured context)
 
-### **What Stayed the Same**
-- ✅ All commands work identically
-- ✅ Security model unchanged
-- ✅ Configuration options preserved
-- ✅ API remains stable
+### **Usage Patterns**
+```typescript
+// Basic logging
+logger.info('ComponentName', 'Operation completed', 'methodName', { result: 'success' });
+
+// Performance timing
+const timer = new PerformanceTimer('FileOps', 'readFile');
+// ... perform operation ...
+timer.endWithFileSize(fileSize, success, quotaUsed);
+
+// Security logging
+logger.logSecurity('Security', 'pathValidation', filePath, blocked, reason);
+```
+
+### **Real-time Monitoring**
+The server exposes a `mcp_sandboxfs_get_logs` tool that allows Claude to:
+- View recent log entries with filtering
+- Monitor performance metrics in real-time
+- Track security events and optimizations
+- Debug issues with detailed context
+
+**Example log output:**
+```
+20:15:42.123 INFO  [FileOps] [readFile] File read optimized: document.txt (25ms, 15.2KB, quota: 45%)
+20:15:42.125 WARN  [Security] [validatePath] [SECURITY:BLOCKED] Path traversal attempt: ../../../etc/passwd
+20:15:45.200 ERROR [MCP-Server] [handleRequest] Request failed {"error": "File not found", "path": "missing.txt"}
+```
+
+For complete implementation details, see our [TypeScript Logging Standards](../../development-standards/logging-standards.md).
 
 ## 🤝 Contributing
 
@@ -476,6 +521,7 @@ This project is licensed under the BSD-3-Clause License - see the [LICENSE](LICE
 - Uses TypeScript for type safety and developer experience
 - Optimized for real-world AI-human collaboration performance
 - Inspired by the need for **fast, secure** AI-human collaboration
+- Follows MCP community standards for tool naming
 
 ---
 
@@ -485,8 +531,8 @@ This project is licensed under the BSD-3-Clause License - see the [LICENSE](LICE
 npm install -g utaba-community-sandboxfs
 ```
 
-**Your AI assistant just got 25-33% faster for text operations!** 🚀
+**Your AI assistant just got 25-33% faster for text operations with MCP standard compliance!** 🚀
 
 ---
 
-**Happy AI collaboration - now with lightning speed!** ⚡🤖✨
+**Happy AI collaboration - now with lightning speed and zero conflicts!** ⚡🤖✨
