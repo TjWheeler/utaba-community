@@ -96,13 +96,13 @@ export function loadConfig(): SandboxConfig {
       : DEFAULT_CONFIG.allowedExtensions,
     
     // NEW: Load size limits from environment
-    maxFileSize: parseInt(process.env.MCP_MAX_FILE_SIZE || '52428800'), // 50MB
-    maxContentLength: parseInt(process.env.MCP_MAX_CONTENT_LENGTH || '10485760'), // 10MB
+    maxFileSize: parseInt(process.env.MCP_SANDBOX_MAX_FILE_SIZE || '52428800'), // 50MB
+    maxContentLength: parseInt(process.env.MCP_SANDBOX_CONTENT_LENGTH || '10485760'), // 10MB
     
     limits: {
-      writeFile: parseInt(process.env.MCP_WRITE_LIMIT || '10485760'),
-      appendFile: parseInt(process.env.MCP_APPEND_LIMIT || '5242880'),
-      readFile: parseInt(process.env.MCP_READ_LIMIT || '104857600')
+      writeFile: parseInt(process.env.MCP_SANDBOX_WRITE_LIMIT || '10485760'),
+      appendFile: parseInt(process.env.MCP_SANDBOX_APPEND_LIMIT || '5242880'),
+      readFile: parseInt(process.env.MCP_SANDBOX_READ_LIMIT || '104857600')
     }
   };
   

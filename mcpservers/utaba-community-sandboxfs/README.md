@@ -246,10 +246,35 @@ MCP_SANDBOX_QUOTA="104857600"
 MCP_SANDBOX_MAX_FILE_SIZE="10485760"
 ```
 
+#### **🆕 Operation Size Limits**
+Fine-tune performance and resource usage with granular size controls:
+
+```bash
+# Maximum file size for any single file (default: 50MB)
+MCP_SANDBOX_MAX_FILE_SIZE="52428800"
+
+# Maximum content length per operation (default: 10MB)
+MCP_SANDBOX_CONTENT_LENGTH="10485760"
+
+# Operation-specific limits (recommended for production)
+MCP_SANDBOX_WRITE_LIMIT="10485760"      # Max write operation size (default: 10MB)
+MCP_SANDBOX_APPEND_LIMIT="5242880"      # Max append operation size (default: 5MB)
+MCP_SANDBOX_READ_LIMIT="104857600"      # Max read operation size (default: 100MB)
+```
+
+**Production Recommendations:**
+- **Development**: Higher limits for larger codebases and datasets
+- **Production**: Conservative limits to prevent resource exhaustion
+- **High-throughput**: Balance performance vs. memory usage
+- **Multi-user**: Lower limits to ensure fair resource allocation
+
 #### Security Settings
 ```bash
 # Allowed file extensions (comma-separated)
 MCP_SANDBOX_ALLOWED_EXTENSIONS=".txt,.json,.csv,.md,.xml,.yaml,.log"
+
+# Blocked file extensions (comma-separated)
+MCP_SANDBOX_BLOCKED_EXTENSIONS=".exe,.dll,.so,.dylib"
 
 # Block dangerous extensions (default: true)
 MCP_SANDBOX_BLOCK_DANGEROUS="true"
@@ -297,9 +322,14 @@ LOG_LEVEL="info"
       "env": {
         "MCP_SANDBOX_ROOT": "/home/dev/ai-workspace",
         "MCP_SANDBOX_QUOTA": "524288000",
+        "MCP_SANDBOX_MAX_FILE_SIZE": "104857600",
+        "MCP_SANDBOX_CONTENT_LENGTH": "20971520",
+        "MCP_SANDBOX_WRITE_LIMIT": "20971520",
+        "MCP_SANDBOX_APPEND_LIMIT": "10485760",
+        "MCP_SANDBOX_READ_LIMIT": "209715200",
         "LOG_FILE": "/var/log/mcp-server.log",
         "LOG_LEVEL": "debug",
-        "MCP_SANDBOX_ALLOWED_EXTENSIONS": ".txt,.json,.csv,.md,.js,.py,.yaml",
+        "MCP_SANDBOX_ALLOWED_EXTENSIONS": ".txt,.json,.csv,.md,.js,.py,.yaml,.xml",
         "MCP_SANDBOX_ALLOW_BINARY": "true"
       }
     }
@@ -307,7 +337,7 @@ LOG_LEVEL="info"
 }
 ```
 
-#### Production Setup with Optimizations
+#### Production Setup with Conservative Limits
 ```json
 {
   "mcpServers": {
@@ -317,6 +347,11 @@ LOG_LEVEL="info"
       "env": {
         "MCP_SANDBOX_ROOT": "/opt/ai-workspace",
         "MCP_SANDBOX_QUOTA": "1073741824",
+        "MCP_SANDBOX_MAX_FILE_SIZE": "26214400",
+        "MCP_SANDBOX_CONTENT_LENGTH": "5242880",
+        "MCP_SANDBOX_WRITE_LIMIT": "5242880",
+        "MCP_SANDBOX_APPEND_LIMIT": "2621440",
+        "MCP_SANDBOX_READ_LIMIT": "52428800",
         "LOG_FILE": "/var/log/mcp-server.log",
         "LOG_MAX_SIZE_MB": "50",
         "LOG_ROTATION_STRATEGY": "rotate",
@@ -325,6 +360,32 @@ LOG_LEVEL="info"
         "LOG_LEVEL": "info",
         "MCP_SANDBOX_ALLOWED_EXTENSIONS": ".txt,.json,.csv,.md,.xml,.yaml,.log",
         "MCP_SANDBOX_BLOCK_DANGEROUS": "true"
+      }
+    }
+  }
+}
+```
+
+#### Multi-User Environment Setup
+```json
+{
+  "mcpServers": {
+    "sandbox-fs": {
+      "command": "npx",
+      "args": ["utaba-community-sandboxfs"],
+      "env": {
+        "MCP_SANDBOX_ROOT": "/shared/ai-workspace",
+        "MCP_SANDBOX_QUOTA": "2147483648",
+        "MCP_SANDBOX_MAX_FILE_SIZE": "10485760",
+        "MCP_SANDBOX_CONTENT_LENGTH": "2097152",
+        "MCP_SANDBOX_WRITE_LIMIT": "2097152",
+        "MCP_SANDBOX_APPEND_LIMIT": "1048576",
+        "MCP_SANDBOX_READ_LIMIT": "20971520",
+        "LOG_FILE": "/var/log/mcp-server.log",
+        "LOG_LEVEL": "info",
+        "MCP_SANDBOX_ALLOWED_EXTENSIONS": ".txt,.json,.csv,.md,.xml,.yaml",
+        "MCP_SANDBOX_BLOCK_DANGEROUS": "true",
+        "MCP_SANDBOX_ALLOW_BINARY": "false"
       }
     }
   }
@@ -404,6 +465,11 @@ node test-optimization.mjs
 - Check that `MCP_SANDBOX_ROOT` points to an existing directory
 - Ensure the process has read/write permissions to the sandbox folder
 
+**"Operation exceeds size limits"**
+- Check your `MCP_*_LIMIT` configuration values
+- Increase limits for larger files or reduce file sizes
+- Monitor quota usage with `mcp_sandboxfs_get_quota_status`
+
 **Performance Issues**
 - Check logs for optimization status: `"Show me recent performance metrics"`
 - Verify content detection is working: Look for `isOptimized: true` in logs
@@ -436,6 +502,7 @@ This will show:
 - **Performance timing comparisons**
 - **Size reduction calculations**
 - **Memory usage improvements**
+- **Operation size limit validations**
 
 ## 📋 Logging Implementation
 
