@@ -331,18 +331,6 @@ Ask Claude to show you optimization metrics:
 "What's my storage usage and transfer efficiency?"
 ```
 
-### **Enhanced Log Viewer**
-
-The new optimized server provides detailed performance insights:
-
-**Performance Log Example:**
-```
-20:15:42.123 INFO  [FileOps] [readFile] File read optimized: large-data.json 
-    (size: 25KB, encoding: utf-8, isOptimized: true, sizeSavings: ~25%)
-20:15:42.125 INFO  [FileOps] [readFile] Smart detection: document.pdf 
-    (size: 2MB, encoding: base64, contentType: application/pdf, isBinary: true)
-20:15:45.200 INFO  [MCP-Server] [handleReadFile] Performance gain: 67ms → 23ms (65% faster)
-```
 
 ### **Content Type Detection Analytics**
 ```
@@ -432,6 +420,69 @@ This will show:
 - **Performance timing comparisons**
 - **Size reduction calculations**
 - **Memory usage improvements**
+
+## 📋 Logging Implementation
+
+This project implements a comprehensive, enterprise-grade logging system built on TypeScript with the following characteristics:
+
+### **Logging Architecture**
+- **Singleton Pattern**: Single logger instance across the application (`Logger.getInstance()`)
+- **Structured Logging**: JSON and text output formats with consistent schema
+- **File Rotation**: Automatic log rotation with configurable size limits and backup retention
+- **Performance Integration**: Built-in timing and metrics collection
+- **Real-time Access**: In-memory log history with filtering capabilities
+
+### **Environment Variables**
+```bash
+# Core logging configuration
+LOG_FILE="/path/to/mcp-server.log"           # File logging location
+LOG_LEVEL="INFO"                             # DEBUG, INFO, WARN, ERROR
+LOG_FORMAT="text"                            # text or json
+LOG_MAX_SIZE_MB="10"                         # Size before rotation
+LOG_ROTATION_STRATEGY="rotate"               # rotate or truncate
+LOG_KEEP_FILES="3"                           # Backup files to retain
+```
+
+### **Log Structure**
+Each log entry contains:
+- **Timestamp** (ISO 8601 format)
+- **Level** (DEBUG/INFO/WARN/ERROR)
+- **Component** (source module/service)
+- **Operation** (specific method/function)
+- **Message** (human-readable description)
+- **Performance Metrics** (duration, file sizes, quota usage)
+- **Security Context** (blocked operations, validation results)
+- **Metadata** (additional structured context)
+
+### **Usage Patterns**
+```typescript
+// Basic logging
+logger.info('ComponentName', 'Operation completed', 'methodName', { result: 'success' });
+
+// Performance timing
+const timer = new PerformanceTimer('FileOps', 'readFile');
+// ... perform operation ...
+timer.endWithFileSize(fileSize, success, quotaUsed);
+
+// Security logging
+logger.logSecurity('Security', 'pathValidation', filePath, blocked, reason);
+```
+
+### **Real-time Monitoring**
+The server exposes a `get_logs` tool that allows Claude to:
+- View recent log entries with filtering
+- Monitor performance metrics in real-time
+- Track security events and optimizations
+- Debug issues with detailed context
+
+**Example log output:**
+```
+20:15:42.123 INFO  [FileOps] [readFile] File read optimized: document.txt (25ms, 15.2KB, quota: 45%)
+20:15:42.125 WARN  [Security] [validatePath] [SECURITY:BLOCKED] Path traversal attempt: ../../../etc/passwd
+20:15:45.200 ERROR [MCP-Server] [handleRequest] Request failed {"error": "File not found", "path": "missing.txt"}
+```
+
+For complete implementation details, see our [TypeScript Logging Standards](../../development-standards/logging-standards.md).
 
 ## 🚀 **Migration Guide**
 

@@ -18,7 +18,7 @@ import { Logger, LogLevel, PerformanceTimer, logger } from './logger.js';
 // Define MCP tools
 const TOOLS: Tool[] = [
   {
-    name: 'execute_command',
+    name: 'mcp_shell_execute_command',
     description: 'Execute a whitelisted development command in a trusted environment. WARNING: This provides system access through npm and other tools.',
     inputSchema: {
       type: 'object',
@@ -48,7 +48,7 @@ const TOOLS: Tool[] = [
     }
   },
   {
-    name: 'execute_command_streaming',
+    name: 'mcp_shell_execute_command_streaming',
     description: 'Execute a command with real-time output streaming for long-running operations',
     inputSchema: {
       type: 'object',
@@ -78,7 +78,7 @@ const TOOLS: Tool[] = [
     }
   },
   {
-    name: 'list_allowed_commands',
+    name: 'mcp_shell_list_allowed_commands',
     description: 'List all whitelisted commands and their configurations',
     inputSchema: {
       type: 'object',
@@ -87,7 +87,7 @@ const TOOLS: Tool[] = [
     }
   },
   {
-    name: 'get_command_status',
+    name: 'mcp_shell_get_command_status',
     description: 'Get status of running commands and execution statistics',
     inputSchema: {
       type: 'object',
@@ -96,7 +96,7 @@ const TOOLS: Tool[] = [
     }
   },
   {
-    name: 'kill_command',
+    name: 'mcp_shell_kill_command',
     description: 'Kill a running command by process ID',
     inputSchema: {
       type: 'object',
@@ -115,7 +115,7 @@ const TOOLS: Tool[] = [
     }
   },
   {
-    name: 'get_logs',
+    name: 'mcp_shell_get_logs',
     description: 'Retrieve recent log entries for debugging and monitoring',
     inputSchema: {
       type: 'object',
@@ -202,27 +202,27 @@ class MCPShellServer {
       try {
         let result;
         switch (name) {
-          case 'execute_command':
+          case 'mcp_shell_execute_command':
             result = await this.handleExecuteCommand(args);
             break;
 
-          case 'execute_command_streaming':
+          case 'mcp_shell_execute_command_streaming':
             result = await this.handleExecuteCommandStreaming(args);
             break;
 
-          case 'list_allowed_commands':
+          case 'mcp_shell_list_allowed_commands':
             result = await this.handleListAllowedCommands();
             break;
 
-          case 'get_command_status':
+          case 'mcp_shell_get_command_status':
             result = await this.handleGetCommandStatus();
             break;
 
-          case 'kill_command':
+          case 'mcp_shell_kill_command':
             result = await this.handleKillCommand(args);
             break;
 
-          case 'get_logs':
+          case 'mcp_shell_get_logs':
             result = await this.handleGetLogs(args);
             break;
 
