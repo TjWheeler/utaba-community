@@ -201,10 +201,10 @@ export function validateFilename(filename: string, config: SandboxConfig): void 
     throw error;
   }
   
-  // Prevent hidden files unless explicitly allowed
-  if (filename !== '.mcp-quota.json') {
-    const error = new SecurityError('Hidden files are not allowed');
-    logger.logSecurity('Security', 'filenameValidation', filename, true, 'Hidden file blocked');
+  
+  if (filename == '.mcp-quota.json') {
+    const error = new SecurityError('This filename is reserved for internal use');
+    logger.logSecurity('Security', 'filenameValidation', filename, true, 'Filename not allowed');
     throw error;
   }
   
