@@ -8,6 +8,7 @@ import { Logger } from './logger.js';
 export interface CommandRequest {
   command: string;
   args: string[];
+  startDirectory: string; 
   workingDirectory?: string;
   environment?: Record<string, string>;
   timeout?: number;
@@ -66,7 +67,8 @@ export class CommandExecutor extends EventEmitter {
     const validation = this.securityValidator.validateCommand(
       request.command,
       request.args,
-      request.workingDirectory
+      request.workingDirectory || "",
+      request.startDirectory
     );
     
     if (!validation.allowed) {
@@ -86,7 +88,8 @@ export class CommandExecutor extends EventEmitter {
     const pattern = validation.matchedPattern!;
     const timeout = this.securityValidator.getCommandTimeout(pattern);
     const sanitizedArgs = validation.sanitizedArgs || request.args;
-    
+    const resolvedWorkingDirectory = this.securityValidator.resolveWorkingDirectory(request.startDirectory, request.workingDirectory || "");
+    this.logger.debug('CommandExecutor', 'Resolved working directory is ' + resolvedWorkingDirectory, 'executeCommand');
     this.logger.info('CommandExecutor', 'Executing command', 'executeCommand', {
       command: request.command,
       args: sanitizedArgs,
@@ -99,7 +102,7 @@ export class CommandExecutor extends EventEmitter {
       request.command,
       sanitizedArgs,
       {
-        cwd: request.workingDirectory,
+        cwd: resolvedWorkingDirectory,
         env: this.securityValidator.sanitizeEnvironment(request.environment),
         timeout: request.timeout || timeout
       }
@@ -121,7 +124,8 @@ export class CommandExecutor extends EventEmitter {
         const validation = this.securityValidator.validateCommand(
           request.command,
           request.args,
-          request.workingDirectory
+          request.workingDirectory || "",
+          request.startDirectory
         );
         
         if (!validation.allowed) {
@@ -142,12 +146,12 @@ export class CommandExecutor extends EventEmitter {
           workingDirectory: request.workingDirectory,
           timeout
         });
-        
+        let resolvedWorkingDirectory = this.securityValidator.resolveWorkingDirectory(request.startDirectory, request.workingDirectory || "");
         const result = await this.spawnProcessStreaming(
           request.command,
           sanitizedArgs,
           {
-            cwd: request.workingDirectory,
+            cwd: resolvedWorkingDirectory,
             env: this.securityValidator.sanitizeEnvironment(request.environment),
             timeout: request.timeout || timeout
           },

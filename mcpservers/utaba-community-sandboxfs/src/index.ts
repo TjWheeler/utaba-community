@@ -549,6 +549,12 @@ class SandboxFileSystemServer {
   
   private async handleAppendFile(args: any) {
     const timer = new PerformanceTimer('MCP-Server', 'handleAppendFile');
+    
+    // Add this logging
+    logger.debug('MCP-Server', `AppendFile content preview: ${args.content.substring(0, 200)}...`, 'handleAppendFile', {
+      contentLength: args.content.length,
+      encoding: args.encoding
+    });
     await this.fileOps!.appendFile(args.path, args.content, args.encoding);
     
     const fileSize = Buffer.byteLength(args.content, args.encoding === 'base64' ? 'base64' : 'utf8');

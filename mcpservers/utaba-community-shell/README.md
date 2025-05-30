@@ -63,7 +63,7 @@ Note: This uses Windows style paths with 2 backslashes.  In Windows you need thi
          "command": "npx",
          "args": ["utaba-community-shell"],
          "env": {
-           "START_DIRECTORY": "C:\\Users\\YourName\\my-project",
+           "MCP_SHELL_START_DIRECTORY": "C:\\Users\\YourName\\my-project",
            "LOG_FILE": "C:\\temp\\mcp-shell.log",
            "LOG_LEVEL": "info",
            "LOG_MAX_SIZE_MB": "50",
@@ -225,7 +225,7 @@ Configure the server behavior using these environment variables:
 #### Core Settings
 ```bash
 # Required: Initial project directory
-START_DIRECTORY="/path/to/your/project"
+MCP_SHELL_START_DIRECTORY="/path/to/your/project"
 
 # Configuration file path
 MCP_SHELL_CONFIG_PATH="/path/to/mcp-shell-config.json"
@@ -268,7 +268,7 @@ LOG_FORMAT="text"
        "command": "node",
       "args": ["C:\\path\\utaba-community-sandboxfs\\dist\\index.js"],
       "env": {
-        "START_DIRECTORY": "C:\\path\\my-project",
+        "MCP_SHELL_START_DIRECTORY": "C:\\path\\my-project",
         "MCP_SHELL_CONFIG_PATH": "C:\\path\\my-project\\.mcp-shell-config.json",
         "LOG_FILE": "C:\\path\\my-project\\mcp-shell.log",
         "LOG_LEVEL": "info",
@@ -287,7 +287,7 @@ LOG_FORMAT="text"
       "command": "mcp-shell",
       "args": [],
       "env": {
-        "START_DIRECTORY": "C:\\path\\my-project",
+        "MCP_SHELL_START_DIRECTORY": "C:\\path\\my-project",
         "MCP_SHELL_CONFIG_PATH": "C:\\path\\my-project\\.mcp-shell-config.json",
         "LOG_FILE": "C:\\path\\my-project\\mcp-shell.log",
         "LOG_LEVEL": "info",
@@ -395,7 +395,7 @@ mcp-shell test
 
 **"Working directory not allowed"**
 - Verify the working directory is within your configured `projectRoots`
-- Check that `START_DIRECTORY` points to the correct location
+- Check that `MCP_SHELL_START_DIRECTORY` points to the correct location
 - Ensure directory permissions allow access
 
 **"Command execution timeout"**

@@ -10,7 +10,7 @@ import {
   ErrorCode,
   McpError
 } from '@modelcontextprotocol/sdk/types.js';
-import { loadConfig, validateConfig, getEnvironmentOverrides, Config } from './config.js';
+import { loadConfig, validateConfig, getEnvironmentOverrides, Config, startDirectory } from './config.js';
 import { CommandExecutor, CommandRequest, CommandUtils } from './commandExecutor.js';
 import { SecurityError } from './security.js';
 import { Logger, LogLevel, PerformanceTimer, logger } from './logger.js';
@@ -265,7 +265,8 @@ class MCPShellServer {
       command: args.command,
       args: args.args || [],
       workingDirectory: args.workingDirectory,
-      timeout: args.timeout
+      timeout: args.timeout,
+      startDirectory: this.config!?.startDirectory || process.cwd()
     };
 
     const result = await this.commandExecutor!.executeCommand(request);
@@ -294,7 +295,8 @@ class MCPShellServer {
       command: args.command,
       args: args.args || [],
       workingDirectory: args.workingDirectory,
-      timeout: args.timeout
+      timeout: args.timeout,
+      startDirectory: this.config!?.startDirectory || process.cwd()
     };
 
     let streamOutput = '';
@@ -464,13 +466,13 @@ class MCPShellServer {
       const envOverrides = getEnvironmentOverrides();
       this.config = { ...baseConfig, ...envOverrides };
 
-      await validateConfig(this.config);
-
+      this.config.startDirectory = await startDirectory();
+      this.config.projectRoots = this.config.projectRoots.concat([this.config.startDirectory]);
+      
       // Initialize logger (it will read LOG_LEVEL and other LOG_* env vars directly)
       await logger.initialize();
-
       // Log startup information
-      logger.info('MCP-Shell', 'Starting Utaba MCP Shell Server v1.0.0');
+      logger.info('MCP-Shell', 'Starting Utaba MCP Shell Server v1.1.1');
       logger.info('MCP-Shell', `Project roots: ${this.config.projectRoots.join(', ')}`);
       logger.info('MCP-Shell', `Trusted environment: ${this.config.trustedEnvironment}`);
       logger.info('MCP-Shell', `Max concurrent commands: ${this.config.maxConcurrentCommands}`);
