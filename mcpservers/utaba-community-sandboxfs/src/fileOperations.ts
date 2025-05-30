@@ -40,6 +40,32 @@ export class FileOperations {
     logger.info('FileOps', 'FileOperations initialized');
   }
   
+private fileLocks: Map<string, Promise<void>> = new Map();
+  
+  private async acquireFileLock(filePath: string): Promise<() => void> {
+    const fullPath = validatePath(filePath, this.config.sandboxRoot);
+    
+    // Wait for any existing operation on this file
+    const existingLock = this.fileLocks.get(fullPath);
+    if (existingLock) {
+      await existingLock;
+    }
+    
+    // Create a new lock for this operation
+    let resolveLock: () => void;
+    const lockPromise = new Promise<void>((resolve) => {
+      resolveLock = resolve;
+    });
+    
+    this.fileLocks.set(fullPath, lockPromise);
+    
+    // Return the unlock function
+    return () => {
+      this.fileLocks.delete(fullPath);
+      resolveLock();
+    };
+  }
+
   /**
    * Get quota status
    */
@@ -400,6 +426,7 @@ export class FileOperations {
     content: string | Buffer, 
     encoding?: FileEncoding
   ): Promise<void> {
+    const unlock = await this.acquireFileLock(relativePath);
     const timer = new PerformanceTimer('FileOps', 'appendFile');
     
     if (typeof relativePath !== 'string') {
@@ -486,6 +513,9 @@ export class FileOperations {
         throw new Error(`Failed to append to file: ${error.message}`);
       }
       throw error;
+    }
+    finally {
+       unlock(); // Always release the lock
     }
   }
   

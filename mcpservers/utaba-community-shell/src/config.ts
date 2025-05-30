@@ -179,7 +179,6 @@ export async function loadConfig(configPath?: string): Promise<Config> {
     const configWithOverrides = { ...rawConfig, ...envOverrides };
     
     const config = ConfigSchema.parse(configWithOverrides);
-    console.log(`Loaded configuration from ${finalPath} and project roots: ${config.projectRoots.join(', ')}`);
 
     // if (config.startDirectory) { 
     //   console.log(`Setting start dir as project root ${config.startDirectory}`);
@@ -192,7 +191,6 @@ export async function loadConfig(configPath?: string): Promise<Config> {
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
       // Configuration file not found - use nodejs template as default
-      console.warn(`Configuration file not found: ${finalPath}. Using default nodejs configuration.`);
       const config = ConfigSchema.parse(DEFAULT_CONFIGS.nodejs);
       await validateConfig(config);
       return config;

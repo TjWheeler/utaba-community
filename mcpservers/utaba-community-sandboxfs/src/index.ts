@@ -8,7 +8,7 @@ import {
   ErrorCode,
   McpError
 } from '@modelcontextprotocol/sdk/types.js';
-import { loadConfig, validateConfig } from './config.js';
+import { loadConfig, validateConfig, SandboxConfig, DEFAULT_LIMITS } from './config.js';
 import { QuotaManager } from './quota.js';
 import { FileOperations } from './fileOperations.js';
 import { SecurityError } from './security.js';
@@ -19,7 +19,7 @@ import { logger, LogLevel, PerformanceTimer } from './logger.js';
 const TOOLS: Tool[] = [
   {
     name: 'mcp_sandboxfs_get_quota_status',
-    description: 'Get current quota usage and available space',
+    description: 'Get current quota usage, available space, and configured operation limits',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -251,6 +251,7 @@ const TOOLS: Tool[] = [
 class SandboxFileSystemServer {
   private server: Server;
   private fileOps: FileOperations | null = null;
+  private config: SandboxConfig | null = null;
   
   constructor() {
     // Create the MCP server instance
@@ -385,15 +386,36 @@ class SandboxFileSystemServer {
   // Tool handlers - each returns content in MCP format
   private async handleGetQuotaStatus() {
     const quota = await this.fileOps!.getQuotaStatus();
+    
     return {
       content: [
         {
           type: 'text',
           text: JSON.stringify({
+            // Existing quota info
             used_mb: (quota.usedBytes / 1024 / 1024).toFixed(2),
             available_mb: (quota.availableBytes / 1024 / 1024).toFixed(2),
             total_mb: (quota.totalQuotaBytes / 1024 / 1024).toFixed(2),
-            percent_used: quota.percentUsed.toFixed(1)
+            percent_used: quota.percentUsed.toFixed(1),
+            
+            // NEW: Operation limits
+            limits: {
+              max_file_size_mb: ((this.config!.maxFileSize ?? DEFAULT_LIMITS.maxFileSize) / 1024 / 1024).toFixed(2),
+              max_content_length_mb: ((this.config!.maxContentLength ?? DEFAULT_LIMITS.maxContentLength) / 1024 / 1024).toFixed(2),
+              operations: {
+                write_file_mb: ((this.config!.limits?.writeFile ?? DEFAULT_LIMITS.limits.writeFile) / 1024 / 1024).toFixed(2),
+                append_file_mb: ((this.config!.limits?.appendFile ?? DEFAULT_LIMITS.limits.appendFile) / 1024 / 1024).toFixed(2),
+                read_file_mb: ((this.config!.limits?.readFile ?? DEFAULT_LIMITS.limits.readFile) / 1024 / 1024).toFixed(2)
+              },
+              // Include raw byte values for precise calculations
+              raw_bytes: {
+                max_file_size: this.config!.maxFileSize ?? DEFAULT_LIMITS.maxFileSize,
+                max_content_length: this.config!.maxContentLength ?? DEFAULT_LIMITS.maxContentLength,
+                write_file: this.config!.limits?.writeFile ?? DEFAULT_LIMITS.limits.writeFile,
+                append_file: this.config!.limits?.appendFile ?? DEFAULT_LIMITS.limits.appendFile,
+                read_file: this.config!.limits?.readFile ?? DEFAULT_LIMITS.limits.readFile
+              }
+            }
           }, null, 2)
         } as TextContent
       ]
@@ -641,8 +663,7 @@ class SandboxFileSystemServer {
       ]
     };
   }
-  
-  private async handleGetFileInfo(args: any) {
+private async handleGetFileInfo(args: any) {
     const info = await this.fileOps!.getFileInfo(args.path);
     return {
       content: [
@@ -659,6 +680,9 @@ class SandboxFileSystemServer {
       // Load and validate configuration
       const config = loadConfig();
       await validateConfig(config);
+      
+      // Store config for use in handlers
+      this.config = config;
       
       // Initialize logger with file support
       await logger.initialize();

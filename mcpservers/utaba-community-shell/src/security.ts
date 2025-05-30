@@ -107,7 +107,7 @@ export class SecurityValidator {
     );
   }
 
-  /**
+   /**
    * Validate command arguments against pattern rules
    */
   private validateArguments(
@@ -126,35 +126,56 @@ export class SecurityValidator {
       }
 
       // Check against allowed args if specified
-      if (pattern.allowedArgs && pattern.allowedArgs.length > 0) {
-        if (!pattern.allowedArgs.includes(arg)) {
-          return {
-            allowed: false,
-            reason: `Argument '${arg}' is not in allowed list for command '${pattern.command}'`,
-          };
-        }
-      }
-
-      // Check against regex patterns if specified
-      if (pattern.argPatterns && pattern.argPatterns.length > 0) {
-        const matchesPattern = pattern.argPatterns.some((regexPattern) => {
-          try {
-            const regex = new RegExp(regexPattern);
-            return regex.test(arg);
-          } catch (error) {
-            // Invalid regex - log and reject
+      let isAllowedArgs = (arg:string) => {
+        if (pattern.allowedArgs && pattern.allowedArgs.length > 0) {
+          if (!pattern.allowedArgs.includes(arg)) {
             return false;
           }
-        });
+          else {
+            return true;
+          }
+        } 
+        return false;
+      };
+      let validArg = isAllowedArgs(arg);
+     
+      let isAllowedPatterns = (arg:string) => {
+        // Check against regex patterns if specified
+        if (pattern.argPatterns && pattern.argPatterns.length > 0) {
+          const matchesPattern = pattern.argPatterns.some((regexPattern) => {
+            try {
+              const regex = new RegExp(regexPattern);
+              return regex.test(arg);
+            } catch (error) {
+              // Invalid regex - log and reject
+              return false;
+            }
+          });
 
-        if (!matchesPattern) {
-          return {
-            allowed: false,
-            reason: `Argument '${arg}' does not match allowed patterns for command '${pattern.command}'`,
-          };
+          if (matchesPattern) {
+            return true;
+          }
         }
+        return false;
+      };
+      let validPattern = isAllowedPatterns(arg);
+      if(validArg || validPattern) { 
+        return {
+              allowed: true
+            };
       }
-
+      else if(!validArg) {
+          return {
+              allowed: false,
+              reason: `Argument '${arg}' is not in allowed list for command '${pattern.command}'`,
+            };
+      }
+      else if(!isAllowedPatterns(arg)) {
+        return {
+              allowed: false,
+              reason: `Argument '${arg}' does not match allowed patterns for command '${pattern.command}'`,
+            };
+      }
       sanitizedArgs.push(arg);
     }
 

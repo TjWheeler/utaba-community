@@ -505,8 +505,7 @@ class MCPShellServer {
       logger.error('MCP-Shell', 'Failed to start server', undefined, { error: errorMessage });
       
       console.error('Failed to start MCP Shell Server:', errorMessage);
-      console.error('Run "mcp-shell init" to create a configuration file');
-      
+            
       process.exit(1);
     }
   }

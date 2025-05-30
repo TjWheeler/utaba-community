@@ -28,7 +28,29 @@ export interface SandboxConfig {
   // Allowed file extensions (whitelist) - if set, only these are allowed
   // Empty array means all extensions allowed (except blocked ones)
   allowedExtensions: string[];
+
+  // NEW: Operation size limits
+  maxFileSize?: number;          // Max individual file size (bytes)
+  maxContentLength?: number;     // Max content length per operation (bytes)
+  
+  // Optional: Operation-specific limits
+  limits?: {
+    writeFile?: number;
+    appendFile?: number;
+    readFile?: number;
+  };
 }
+
+// Default limits for operations
+export const DEFAULT_LIMITS = {
+  maxFileSize: 50 * 1024 * 1024,      // 50MB
+  maxContentLength: 10 * 1024 * 1024, // 10MB per operation
+  limits: {
+    writeFile: 10 * 1024 * 1024,      // 10MB
+    appendFile: 5 * 1024 * 1024,      // 5MB  
+    readFile: 100 * 1024 * 1024       // 100MB (reads can be larger)
+  }
+};
 
 // Default configuration
 export const DEFAULT_CONFIG: SandboxConfig = {
@@ -39,7 +61,11 @@ export const DEFAULT_CONFIG: SandboxConfig = {
   allowDirectoryOps: true,
   allowBinary: true,
   blockedExtensions: [],
-  allowedExtensions: []
+  allowedExtensions: [],
+  // Apply default limits
+  maxFileSize: DEFAULT_LIMITS.maxFileSize,
+  maxContentLength: DEFAULT_LIMITS.maxContentLength,
+  limits: DEFAULT_LIMITS.limits
 };
 
 // Common dangerous extensions for different platforms
@@ -67,7 +93,17 @@ export function loadConfig(): SandboxConfig {
       : DEFAULT_CONFIG.blockedExtensions,
     allowedExtensions: process.env.MCP_SANDBOX_ALLOWED_EXTENSIONS
       ? process.env.MCP_SANDBOX_ALLOWED_EXTENSIONS.split(',').map(ext => ext.trim().toLowerCase())
-      : DEFAULT_CONFIG.allowedExtensions
+      : DEFAULT_CONFIG.allowedExtensions,
+    
+    // NEW: Load size limits from environment
+    maxFileSize: parseInt(process.env.MCP_MAX_FILE_SIZE || '52428800'), // 50MB
+    maxContentLength: parseInt(process.env.MCP_MAX_CONTENT_LENGTH || '10485760'), // 10MB
+    
+    limits: {
+      writeFile: parseInt(process.env.MCP_WRITE_LIMIT || '10485760'),
+      appendFile: parseInt(process.env.MCP_APPEND_LIMIT || '5242880'),
+      readFile: parseInt(process.env.MCP_READ_LIMIT || '104857600')
+    }
   };
   
   // If user wants extra safety, they can set this env var
@@ -92,6 +128,15 @@ export async function validateConfig(config: SandboxConfig): Promise<void> {
   
   if (config.maxFileSizeBytes <= 0 || config.maxFileSizeBytes > config.quotaBytes) {
     throw new Error('Max file size must be positive and less than quota');
+  }
+  
+  // Validate new size limits
+  if (config.maxFileSize && config.maxFileSize <= 0) {
+    throw new Error('Max file size must be positive');
+  }
+  
+  if (config.maxContentLength && config.maxContentLength <= 0) {
+    throw new Error('Max content length must be positive');
   }
   
   // Validate extension lists

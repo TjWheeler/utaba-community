@@ -20,7 +20,8 @@ server.stderr.on('data', (data) => {
 // Send test commands
 const commands = [
   //'{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}',
-  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"mcp_shell_execute_command","arguments":{"command":"npm","args":["run","build"],"workingDirectory":"projects/utaba-community/mcpservers/utaba-community-shell"}}}'
+  //'{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"mcp_shell_execute_command","arguments":{"command":"npm","args":["run","build"],"workingDirectory":"projects/utaba-community/mcpservers/utaba-community-shell"}}}'
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"mcp_shell_execute_command","arguments":{"command":"node","args":["test.js"],"workingDirectory":"projects/utaba-community/mcpservers/utaba-community-shell"}}}'
 ];
 
 commands.forEach((cmd, i) => {
