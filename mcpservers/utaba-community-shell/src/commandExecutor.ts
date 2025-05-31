@@ -95,13 +95,13 @@ export class CommandExecutor extends EventEmitter {
     // Initialize approval manager if any commands require confirmation
     if (this.hasCommandsRequiringApproval()) {
       this.approvalManager = new ApprovalManager(
-        process.cwd(), // Use current working directory for approval queue
+        this.config.approvalQueueBaseDir || process.cwd(), // Use current working directory for approval queue
         logger,
         // Enable bridge configuration for async job integration
         {
           enabled: true,
-          asyncQueueBaseDir: process.cwd(),
-          approvalQueueBaseDir: process.cwd(),
+          asyncQueueBaseDir: this.config.asyncQueueBaseDir,
+          approvalQueueBaseDir: this.config.approvalQueueBaseDir || process.cwd(),
           monitoringInterval: 5000 // Check every 5 seconds
         }
       );
@@ -109,7 +109,7 @@ export class CommandExecutor extends EventEmitter {
 
     // Initialize async job queue
     this.asyncJobQueue = createAsyncJobQueue({
-      baseDir: process.cwd() // Will create async-queue subdirectory
+      baseDir: this.config.asyncQueueBaseDir // Will create async-queue subdirectory
     }, logger);
   }
 

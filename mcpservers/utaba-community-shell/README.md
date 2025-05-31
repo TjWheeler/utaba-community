@@ -655,7 +655,7 @@ Find more open source from [Utaba AI](https://utaba.ai) at the [Utaba Git Hub Co
 ```bash
 npm install -g utaba-community-shell
 ```
-
+Then update the configuration of your AI tool.  Like Calude Desktop.
 **Give Claude the power of the command line - with human oversight for safety!** 🚀🛡️
 
 ---
