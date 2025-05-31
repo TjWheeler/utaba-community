@@ -1,0 +1,12 @@
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            jobId,
+            ...result,
+            executionTimeFormatted: this.formatDuration(result.executionTime)
+          }, null, 2)
+        } as TextContent
+      ]
+    };

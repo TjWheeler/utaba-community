@@ -15,7 +15,7 @@ import { CommandExecutor, CommandRequest, CommandUtils } from './commandExecutor
 import { SecurityError } from './security.js';
 import { Logger, LogLevel, PerformanceTimer, logger } from './logger.js';
 
-// Define MCP tools
+// Define MCP tools (now includes async tools!)
 const TOOLS: Tool[] = [
   {
     name: 'mcp_shell_execute_command',
@@ -77,6 +77,123 @@ const TOOLS: Tool[] = [
       required: ['command']
     }
   },
+  // NEW ASYNC TOOLS
+  {
+    name: 'mcp_shell_execute_command_async',
+    description: 'Submit command for async execution - returns immediately with job ID. No MCP timeout limits, supports long-running commands.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        command: {
+          type: 'string',
+          description: 'Command to execute (must be in whitelist)'
+        },
+        args: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Command arguments',
+          default: []
+        },
+        workingDirectory: {
+          type: 'string',
+          description: 'Working directory for command execution'
+        },
+        timeout: {
+          type: 'number',
+          description: 'Timeout in milliseconds (optional, uses command default)',
+          minimum: 1000,
+          maximum: 14400000  // 4 hours max for async
+        },
+        conversationId: {
+          type: 'string',
+          description: 'Optional conversation ID for tracking jobs across sessions'
+        },
+        userDescription: {
+          type: 'string',
+          description: 'Optional description of what you\'re trying to accomplish'
+        }
+      },
+      required: ['command']
+    }
+  },
+  {
+    name: 'mcp_shell_check_job_status',
+    description: 'Check status and progress of an async job by job ID',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        jobId: {
+          type: 'string',
+          description: 'Job ID returned from execute_command_async'
+        }
+      },
+      required: ['jobId']
+    }
+  },
+  {
+    name: 'mcp_shell_get_job_result',
+    description: 'Retrieve execution results for completed job using secure token',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        jobId: {
+          type: 'string',
+          description: 'Job ID of completed job'
+        },
+        executionToken: {
+          type: 'string',
+          description: 'Execution token provided when job completed'
+        }
+      },
+      required: ['jobId', 'executionToken']
+    }
+  },
+  {
+    name: 'mcp_shell_list_jobs',
+    description: 'List recent async jobs with optional filtering',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        limit: {
+          type: 'number',
+          description: 'Maximum number of jobs to return',
+          default: 10,
+          minimum: 1,
+          maximum: 50
+        },
+        conversationId: {
+          type: 'string',
+          description: 'Filter by conversation ID'
+        },
+        status: {
+          type: 'string',
+          description: 'Filter by job status',
+          enum: ['pending_approval', 'approved', 'executing', 'completed', 'rejected', 'failed']
+        }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'mcp_shell_check_conversation_jobs',
+    description: 'Check status of all jobs in current conversation session',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        conversationId: {
+          type: 'string',
+          description: 'Optional conversation ID (uses current session if not provided)'
+        },
+        includeCompleted: {
+          type: 'boolean',
+          description: 'Include recently completed jobs',
+          default: true
+        }
+      },
+      required: []
+    }
+  },
+  // EXISTING TOOLS
   {
     name: 'mcp_shell_list_allowed_commands',
     description: 'List all whitelisted commands and their configurations',
@@ -183,7 +300,7 @@ class MCPShellServer {
     this.server = new Server(
       {
         name: 'utaba-mcp-shell',
-        version: '1.2.0'
+        version: '1.3.0' // Bumped for async support
       },
       {
         capabilities: {
@@ -226,6 +343,7 @@ class MCPShellServer {
       try {
         let result;
         switch (name) {
+          // SYNC COMMANDS
           case 'mcp_shell_execute_command':
             result = await this.handleExecuteCommand(args);
             break;
@@ -234,6 +352,28 @@ class MCPShellServer {
             result = await this.handleExecuteCommandStreaming(args);
             break;
 
+          // ASYNC COMMANDS
+          case 'mcp_shell_execute_command_async':
+            result = await this.handleExecuteCommandAsync(args);
+            break;
+
+          case 'mcp_shell_check_job_status':
+            result = await this.handleCheckJobStatus(args);
+            break;
+
+          case 'mcp_shell_get_job_result':
+            result = await this.handleGetJobResult(args);
+            break;
+
+          case 'mcp_shell_list_jobs':
+            result = await this.handleListJobs(args);
+            break;
+
+          case 'mcp_shell_check_conversation_jobs':
+            result = await this.handleCheckConversationJobs(args);
+            break;
+
+          // UTILITY COMMANDS
           case 'mcp_shell_list_allowed_commands':
             result = await this.handleListAllowedCommands();
             break;
@@ -291,7 +431,188 @@ class MCPShellServer {
     });
   }
 
-  // Tool handlers
+  // ASYNC TOOL HANDLERS
+
+  private async handleExecuteCommandAsync(args: any) {
+    const request: CommandRequest = {
+      command: args.command,
+      args: args.args || [],
+      workingDirectory: args.workingDirectory,
+      timeout: args.timeout,
+      startDirectory: this.config!?.startDirectory || process.cwd()
+    };
+
+    const options = {
+      conversationId: args.conversationId,
+      userDescription: args.userDescription
+    };
+
+    const result = await this.commandExecutor!.executeCommandAsync(request, options);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            jobId: result.jobId,
+            status: result.status,
+            submittedAt: result.submittedAt,
+            estimatedApprovalTime: result.estimatedApprovalTime,
+            approvalUrl: result.approvalUrl,
+            message: result.status === 'pending_approval' 
+              ? `Job submitted for approval. Use approval center: ${result.approvalUrl}`
+              : `Job submitted successfully with ID: ${result.jobId}`,
+            nextAction: result.status === 'pending_approval'
+              ? 'Approve the command in the browser, then check job status'
+              : 'Check job status periodically with mcp_shell_check_job_status'
+          }, null, 2)
+        } as TextContent
+      ]
+    };
+  }
+
+  private async handleCheckJobStatus(args: any) {
+    const { jobId } = args;
+
+    if (!jobId) {
+      throw new McpError(ErrorCode.InvalidRequest, 'Job ID is required');
+    }
+
+    const result = await this.commandExecutor!.checkJobStatus(jobId);
+
+    if (!result) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              error: 'Job not found',
+              jobId
+            }, null, 2)
+          } as TextContent
+        ]
+      };
+    }
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            ...result,
+            message: result.progressMessage,
+            timeElapsedFormatted: this.formatDuration(result.timeElapsed),
+            estimatedTimeRemainingFormatted: result.estimatedTimeRemaining 
+              ? this.formatDuration(result.estimatedTimeRemaining)
+              : undefined
+          }, null, 2)
+        } as TextContent
+      ]
+    };
+  }
+
+  private async handleGetJobResult(args: any) {
+    const { jobId, executionToken } = args;
+
+    if (!jobId || !executionToken) {
+      throw new McpError(ErrorCode.InvalidRequest, 'Job ID and execution token are required');
+    }
+
+    const result = await this.commandExecutor!.getJobResult(jobId, executionToken);
+
+    if (!result) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              error: 'Job not found or results not available',
+              jobId
+            }, null, 2)
+          } as TextContent
+        ]
+      };
+    }
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            jobId,
+            ...result,
+            executionTimeFormatted: this.formatDuration(result.executionTime)
+          }, null, 2)
+        } as TextContent
+      ]
+    };
+  }
+
+  private async handleListJobs(args: any) {
+    const options = {
+      limit: args.limit,
+      conversationId: args.conversationId,
+      status: args.status
+    };
+
+    const jobs = await this.commandExecutor!.listJobs(options);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            totalJobs: jobs.length,
+            jobs: jobs.map(job => ({
+              ...job,
+              timeElapsedFormatted: this.formatDuration(Date.now() - job.submittedAt),
+              estimatedTimeRemainingFormatted: job.estimatedTimeRemaining 
+                ? this.formatDuration(job.estimatedTimeRemaining)
+                : undefined
+            }))
+          }, null, 2)
+        } as TextContent
+      ]
+    };
+  }
+
+  private async handleCheckConversationJobs(args: any) {
+    const options = {
+      conversationId: args.conversationId
+    };
+
+    const result = await this.commandExecutor!.checkConversationJobs(options.conversationId);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            summary: {
+              activeJobs: result.activeJobs.length,
+              recentlyCompleted: result.recentlyCompleted.length,
+              pendingResults: result.pendingResults.length
+            },
+            activeJobs: result.activeJobs,
+            recentlyCompleted: result.recentlyCompleted,
+            pendingResults: result.pendingResults.map(job => ({
+              ...job,
+              hasExecutionToken: !!job.executionToken
+            }))
+          }, null, 2)
+        } as TextContent
+      ]
+    };
+  }
+
+  // EXISTING TOOL HANDLERS
+
   private async handleExecuteCommand(args: any) {
     const request: CommandRequest = {
       command: args.command,
@@ -385,6 +706,11 @@ class MCPShellServer {
             maxConcurrentCommands: this.config!.maxConcurrentCommands,
             allowedCommands: commands,
             approvalSystem: approvalStatus,
+            asyncSupport: {
+              enabled: true,
+              maxAsyncTimeout: 14400000, // 4 hours
+              queueDirectory: 'async-queue'
+            },
             securityWarning: 'Commands execute with full system privileges in trusted environment'
           }, null, 2)
         } as TextContent
@@ -410,7 +736,11 @@ class MCPShellServer {
               startTime: proc.startTime,
               runningFor: Date.now() - proc.startTime
             })),
-            approvalSystem: approvalStatus
+            approvalSystem: approvalStatus,
+            asyncJobQueue: {
+              enabled: true,
+              version: '1.3.0'
+            }
           }, null, 2)
         } as TextContent
       ]
@@ -562,6 +892,15 @@ class MCPShellServer {
     };
   }
 
+  // UTILITY METHODS
+
+  private formatDuration(ms: number): string {
+    if (ms < 1000) return `${ms}ms`;
+    if (ms < 60000) return `${Math.round(ms / 1000)}s`;
+    if (ms < 3600000) return `${Math.round(ms / 60000)}m`;
+    return `${Math.round(ms / 3600000)}h`;
+  }
+
   async run() {
     try {
       // Load and validate configuration
@@ -576,7 +915,7 @@ class MCPShellServer {
       await logger.initialize();
       
       // Log startup information
-      logger.info('MCP-Shell', 'Starting Utaba MCP Shell Server v1.2.0 with Approval System');
+      logger.info('MCP-Shell', 'Starting Utaba MCP Shell Server v1.3.0 with Async Job Queue');
       logger.info('MCP-Shell', `Project roots: ${this.config.projectRoots.join(', ')}`);
       logger.info('MCP-Shell', `Trusted environment: ${this.config.trustedEnvironment}`);
       logger.info('MCP-Shell', `Max concurrent commands: ${this.config.maxConcurrentCommands}`);
@@ -592,6 +931,9 @@ class MCPShellServer {
         logger.info('MCP-Shell', 'No commands require approval - approval system disabled');
       }
 
+      // Log async job queue info
+      logger.info('MCP-Shell', 'Async job queue system enabled - supports long-running commands');
+
       // Security warning
       if (this.config.trustedEnvironment) {
         logger.warn('MCP-Shell', 'SECURITY WARNING: Running in trusted environment mode');
@@ -602,7 +944,7 @@ class MCPShellServer {
       // Initialize command executor
       this.commandExecutor = new CommandExecutor(this.config, logger);
       
-      // Initialize the command executor (this will set up approval system if needed)
+      // Initialize the command executor (this will set up approval system and async queue)
       await this.commandExecutor.initialize();
 
       // Set up graceful shutdown
@@ -614,7 +956,7 @@ class MCPShellServer {
       const transport = new StdioServerTransport();
       await this.server.connect(transport);
 
-      logger.info('MCP-Shell', 'Server running on stdio transport');
+      logger.info('MCP-Shell', 'Server running on stdio transport with async job queue support');
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
