@@ -1,7 +1,8 @@
 import path from 'path';
 import crypto from 'crypto';
+import { EventEmitter } from 'events';
 import { ApprovalQueue } from './queue.js';
-import { ApprovalServer } from './server.js'; // This should work now
+import { ApprovalServer } from './server.js';
 import { ApprovalBridge, ApprovalBridgeConfig, DEFAULT_APPROVAL_BRIDGE_CONFIG, BridgedJob } from './bridge.js';
 import {
   ApprovalRequest,
@@ -17,7 +18,7 @@ import { Logger } from '../logger.js';
  * 
  * Provides the high-level interface for command approval workflow
  */
-export class ApprovalManager {
+export class ApprovalManager extends EventEmitter {
   private queue: ApprovalQueue;
   private server: ApprovalServer | null = null;
   private bridge: ApprovalBridge | null = null;
@@ -28,6 +29,7 @@ export class ApprovalManager {
     private logger: Logger,
     private bridgeConfig?: Partial<ApprovalBridgeConfig>
   ) {
+    super();
     this.queue = new ApprovalQueue(baseDir, logger);
     
     // Initialize bridge if enabled
@@ -115,6 +117,16 @@ export class ApprovalManager {
       // Start approval server if not already running
       await this.ensureServerRunning();
 
+      // Emit event for new request (for real-time UI updates)
+      this.emit('requestCreated', {
+        requestId: request.id,
+        command,
+        args,
+        workingDirectory,
+        riskScore: request.riskScore,
+        timestamp: Date.now()
+      });
+
       // Wait for decision
       const decision = await this.queue.waitForDecision(request.id, timeout);
 
@@ -122,6 +134,14 @@ export class ApprovalManager {
         requestId: request.id,
         decision: decision.decision,
         decidedBy: decision.decidedBy
+      });
+
+      // Emit event for decision (for real-time UI updates)
+      this.emit('requestDecided', {
+        requestId: request.id,
+        decision: decision.decision,
+        decidedBy: decision.decidedBy,
+        timestamp: Date.now()
       });
 
       return decision;
@@ -297,6 +317,14 @@ export class ApprovalManager {
     } else {
       await this.queue.approveRequest(requestId, decidedBy);
     }
+
+    // Emit event for manual approval (for real-time UI updates)
+    this.emit('requestDecided', {
+      requestId,
+      decision: 'approve',
+      decidedBy,
+      timestamp: Date.now()
+    });
   }
 
   /**
@@ -313,6 +341,15 @@ export class ApprovalManager {
     } else {
       await this.queue.rejectRequest(requestId, decidedBy);
     }
+
+    // Emit event for manual rejection (for real-time UI updates)
+    this.emit('requestDecided', {
+      requestId,
+      decision: 'reject',
+      decidedBy,
+      reason,
+      timestamp: Date.now()
+    });
   }
 
   /**
@@ -342,6 +379,16 @@ export class ApprovalManager {
       bridgedJobCount: 0,
       config: { enabled: false }
     };
+  }
+
+  /**
+   * 🔥 NEW: Trigger immediate scan for new async jobs requiring approval
+   */
+  async triggerAsyncJobScan(): Promise<void> {
+    if (this.bridge) {
+      await this.bridge.triggerImmediateScan();
+      this.logger.debug('ApprovalManager', 'Triggered immediate async job scan', 'triggerAsyncJobScan');
+    }
   }
 
   /**
@@ -470,7 +517,7 @@ export class ApprovalManager {
         riskThreshold: 8
       };
 
-      // 🔥 CRITICAL FIX: Pass manager (this) instead of queue to server
+      // Pass manager (this) to server for event listening
       this.server = new ApprovalServer(this, serverConfig, this.logger);
       const { port, authToken, url } = await this.server.start();
 
@@ -505,13 +552,39 @@ export class ApprovalManager {
         approvalRequestId: bridgedJob.approvalRequestId,
         command: bridgedJob.command
       });
+
+      // Emit event for new bridged request (for real-time UI updates)
+      this.emit('requestCreated', {
+        requestId: bridgedJob.approvalRequestId,
+        command: bridgedJob.command,
+        args: bridgedJob.args,
+        workingDirectory: bridgedJob.workingDirectory,
+        riskScore: bridgedJob.riskScore || 2,
+        timestamp: bridgedJob.timestamp,
+        source: 'async_bridge'
+      });
     });
 
+    // 🔥 THE KEY FIX: Handle approval processed events and notify UI immediately
     this.bridge.on('approvalProcessed', (result) => {
       this.logger.info('ApprovalManager', 'Bridge processed approval decision', 'bridgeEvent', {
         asyncJobId: result.asyncJobId,
         decision: result.decision,
         decidedBy: result.decidedBy
+      });
+
+      // 🔥 CRITICAL: Emit immediate UI update event to eliminate race condition
+      this.emit('requestDecided', {
+        requestId: result.approvalRequestId || result.asyncJobId,
+        decision: result.decision,
+        decidedBy: result.decidedBy,
+        timestamp: Date.now(),
+        source: 'async_bridge'
+      });
+
+      this.logger.debug('ApprovalManager', 'Emitted requestDecided event for UI refresh', 'bridgeEvent', {
+        requestId: result.approvalRequestId || result.asyncJobId,
+        decision: result.decision
       });
     });
 

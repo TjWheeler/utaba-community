@@ -18,6 +18,7 @@ export class ApprovalServer {
   private authToken: string;
   private isRunning = false;
   private port: number | null = null;
+  private connectedClients = new Set<Response>(); // Track SSE connections
 
   constructor(
     private approvalManager: ApprovalManager, // 🔥 CHANGED: Use manager instead of queue
@@ -30,6 +31,7 @@ export class ApprovalServer {
     this.setupMiddleware();
     this.setupRoutes();
     this.setupErrorHandling();
+    this.setupManagerEventListeners(); // 🔥 NEW: Listen to manager events
   }
 
   /**
@@ -93,6 +95,16 @@ export class ApprovalServer {
       return;
     }
 
+    // Close all SSE connections
+    for (const client of this.connectedClients) {
+      try {
+        client.end();
+      } catch (error) {
+        // Ignore errors when closing connections
+      }
+    }
+    this.connectedClients.clear();
+
     return new Promise((resolve) => {
       this.server!.close(() => {
         this.isRunning = false;
@@ -125,6 +137,64 @@ export class ApprovalServer {
   }
 
   // Private methods
+
+  /**
+   * 🔥 NEW: Set up event listeners for manager events to push real-time updates
+   */
+  private setupManagerEventListeners(): void {
+    this.approvalManager.on('requestCreated', (data) => {
+      this.logger.debug('ApprovalServer', 'Received requestCreated event', 'managerEvent', {
+        requestId: data.requestId,
+        command: data.command
+      });
+      
+      this.broadcastToClients({
+        type: 'requestCreated',
+        data,
+        timestamp: Date.now()
+      });
+    });
+
+    // 🔥 KEY FIX: Listen for requestDecided events and immediately notify all clients
+    this.approvalManager.on('requestDecided', (data) => {
+      this.logger.debug('ApprovalServer', 'Received requestDecided event - broadcasting to clients', 'managerEvent', {
+        requestId: data.requestId,
+        decision: data.decision,
+        decidedBy: data.decidedBy,
+        connectedClients: this.connectedClients.size
+      });
+      
+      this.broadcastToClients({
+        type: 'requestDecided',
+        data,
+        timestamp: Date.now()
+      });
+    });
+  }
+
+  /**
+   * 🔥 NEW: Broadcast events to all connected SSE clients
+   * 🔥 FIXED: Use actual newlines instead of escaped backslashes
+   */
+  private broadcastToClients(event: any): void {
+    const eventData = JSON.stringify(event);
+    
+    for (const client of this.connectedClients) {
+      try {
+        client.write(`data: ${eventData}\n\n`); // 🔥 FIXED: Real newlines
+      } catch (error) {
+        // Remove dead connections
+        this.connectedClients.delete(client);
+        this.logger.debug('ApprovalServer', 'Removed dead SSE connection', 'broadcast');
+      }
+    }
+
+    this.logger.debug('ApprovalServer', 'Broadcast event to clients', 'broadcast', {
+      eventType: event.type,
+      clientCount: this.connectedClients.size,
+      eventData: eventData.substring(0, 100) + '...'
+    });
+  }
 
   private setupMiddleware(): void {
     // Parse JSON bodies
@@ -274,13 +344,11 @@ export class ApprovalServer {
       }
     });
 
-    // Get specific request details - 🔥 WOULD NEED FIXING: Manager doesn't have getRequest method
+    // Get specific request details
     this.app.get('/api/requests/:id', async (req, res) => {
       try {
         const { id } = req.params;
         
-        // 🔥 TODO: ApprovalManager needs a getRequest method or we need to get from queue
-        // For now, get all pending and find the one we want
         const allRequests = await this.approvalManager.getPendingRequests();
         const request = allRequests.find(r => r.id === id);
         
@@ -298,41 +366,69 @@ export class ApprovalServer {
       }
     });
 
-    // Server-Sent Events for real-time updates
-    // 🔥 PROBLEM: This still needs to be connected to manager events, not queue events
+    // Server-Sent Events for real-time updates using manager events
+    // 🔥 FIXED: All SSE writes now use actual newlines instead of escaped backslashes
     this.app.get('/api/events', (req, res) => {
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Connection', 'keep-alive');
       res.setHeader('Access-Control-Allow-Origin', '*');
 
-      // Send initial connection event
-      res.write('data: ' + JSON.stringify({ type: 'connected', timestamp: Date.now() }) + '\n\n');
+      // Add this client to our tracked connections
+      this.connectedClients.add(res);
 
-      // 🔥 TODO: Need to properly handle events from manager
-      // For now, implement basic polling-based updates
-      const updateInterval = setInterval(async () => {
-        try {
-          const requests = await this.approvalManager.getPendingRequests();
-          res.write('data: ' + JSON.stringify({ 
-            type: 'requestsUpdate', 
-            requests,
-            timestamp: Date.now() 
-          }) + '\n\n');
-        } catch (error) {
-          // Connection might be closed
-        }
-      }, 5000); // Update every 5 seconds
+      this.logger.debug('ApprovalServer', 'New SSE client connected', 'sse', {
+        totalClients: this.connectedClients.size
+      });
+
+      // Send initial connection event - 🔥 FIXED: Real newlines
+      res.write('data: ' + JSON.stringify({ 
+        type: 'connected', 
+        timestamp: Date.now(),
+        message: 'Real-time updates active'
+      }) + '\n\n');
+
+      // Send current state - 🔥 FIXED: Real newlines
+      this.approvalManager.getPendingRequests().then(requests => {
+        res.write('data: ' + JSON.stringify({ 
+          type: 'initialData', 
+          requests,
+          timestamp: Date.now() 
+        }) + '\n\n');
+      }).catch(error => {
+        this.logger.error('ApprovalServer', 'Failed to send initial SSE data', 'sse', {
+          error: error.message
+        });
+      });
 
       // Clean up on client disconnect
       req.on('close', () => {
-        clearInterval(updateInterval);
+        this.connectedClients.delete(res);
+        this.logger.debug('ApprovalServer', 'SSE client disconnected', 'sse', {
+          totalClients: this.connectedClients.size
+        });
       });
 
-      // Keep connection alive
+      req.on('error', () => {
+        this.connectedClients.delete(res);
+      });
+
+      // Keep connection alive with periodic pings - 🔥 FIXED: Real newlines
       const keepAlive = setInterval(() => {
-        res.write('data: ' + JSON.stringify({ type: 'ping', timestamp: Date.now() }) + '\n\n');
-      }, 30000);
+        if (this.connectedClients.has(res)) {
+          try {
+            res.write('data: ' + JSON.stringify({ 
+              type: 'ping', 
+              timestamp: Date.now() 
+            }) + '\n\n');
+          } catch (error) {
+            this.connectedClients.delete(res);
+            clearInterval(keepAlive);
+          }
+        } else {
+          clearInterval(keepAlive);
+        }
+      }, 30000); // Ping every 30 seconds
 
       req.on('close', () => {
         clearInterval(keepAlive);
@@ -358,7 +454,7 @@ export class ApprovalServer {
   }
 
   private async generateApprovalUI(): Promise<string> {
-    // Same UI code as before - no changes needed here
+    // Enhanced UI with AGGRESSIVE polling fix
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -429,6 +525,40 @@ export class ApprovalServer {
             border-radius: 8px;
             padding: 20px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        
+        .footer {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border-top: 3px solid #3498db;
+        }
+        
+        .footer p {
+            color: #666;
+            margin: 0;
+            font-size: 14px;
+        }
+        
+        .footer a {
+            color: #3498db;
+            text-decoration: none;
+            font-weight: 500;
+        }
+        
+        .footer a:hover {
+            text-decoration: underline;
+        }
+        
+        .footer-links {
+            margin-top: 8px;
+        }
+        
+        .footer-links a {
+            margin: 0 10px;
         }
         
         .request-card {
@@ -436,11 +566,20 @@ export class ApprovalServer {
             border-radius: 8px;
             padding: 20px;
             margin-bottom: 15px;
-            transition: border-color 0.2s;
+            transition: all 0.3s ease;
         }
         
         .request-card:hover {
             border-color: #3498db;
+        }
+        
+        .request-card.removing {
+            opacity: 0;
+            transform: scale(0.95);
+            margin-bottom: 0;
+            padding: 0;
+            height: 0;
+            overflow: hidden;
         }
         
         .request-header {
@@ -568,6 +707,7 @@ export class ApprovalServer {
             border-radius: 6px;
             font-weight: 600;
             z-index: 1000;
+            transition: opacity 0.3s;
         }
         
         .status-connected {
@@ -578,6 +718,11 @@ export class ApprovalServer {
         .status-disconnected {
             background: #f8d7da;
             color: #721c24;
+        }
+        
+        .status-polling {
+            background: #fff3cd;
+            color: #856404;
         }
         
         .loading {
@@ -612,6 +757,11 @@ export class ApprovalServer {
             .btn {
                 width: 100%;
             }
+            
+            .footer-links a {
+                display: block;
+                margin: 5px 0;
+            }
         }
     </style>
 </head>
@@ -619,7 +769,7 @@ export class ApprovalServer {
     <div class="container">
         <div class="header">
             <h1>🛡️ Command Approval Center</h1>
-            <p>Review and approve command executions for enhanced security</p>
+            <p>Review and approve command executions for enhanced security (SSE Fixed)</p>
         </div>
         
         <div class="stats" id="stats">
@@ -647,6 +797,13 @@ export class ApprovalServer {
                 <div class="loading"></div>
             </div>
         </div>
+        
+        <div class="footer">
+            <p>Proudly open sourced for the community by <a href="https://utaba.ai" target="_blank">Utaba AI</a></p>
+            <div class="footer-links">
+                <a href="https://github.com/TjWheeler/utaba-community" target="_blank">Utaba Community Github</a>
+            </div>
+        </div>
     </div>
     
     <div class="status-indicator" id="status-indicator">
@@ -657,6 +814,10 @@ export class ApprovalServer {
         class ApprovalUI {
             constructor() {
                 this.eventSource = null;
+                this.pollingInterval = null;
+                this.isSSEConnected = false;
+                this.lastDataHash = null;
+                this.pollCount = 0;
                 this.init();
             }
             
@@ -689,6 +850,7 @@ export class ApprovalServer {
                     const data = await response.json();
                     
                     this.renderRequests(data.requests || []);
+                    this.lastDataHash = JSON.stringify(data.requests || []); // Track initial hash
                 } catch (error) {
                     console.error('Failed to load pending requests:', error);
                     this.renderError('Failed to load pending requests');
@@ -782,7 +944,6 @@ export class ApprovalServer {
                 const card = document.querySelector(\`[data-request-id="\${requestId}"]\`);
                 if (!card) return;
                 
-                // Disable buttons
                 const buttons = card.querySelectorAll('.btn');
                 buttons.forEach(btn => btn.disabled = true);
                 
@@ -798,66 +959,99 @@ export class ApprovalServer {
                     });
                     
                     if (response.ok) {
-                        // Remove the card with animation
-                        card.style.opacity = '0.5';
-                        card.style.transform = 'scale(0.95)';
-                        setTimeout(() => {
-                            card.remove();
-                            this.loadStats(); // Refresh stats
-                            this.checkEmpty();
-                        }, 300);
+                        console.log(\`\${action} successful for request \${requestId} - removing card immediately\`);
+                        this.removeRequestCard(requestId);
+                        await this.loadStats();
                     } else {
                         throw new Error('Failed to process decision');
                     }
                 } catch (error) {
                     console.error(\`Failed to \${action} request:\`, error);
-                    // Re-enable buttons
                     buttons.forEach(btn => btn.disabled = false);
                     alert(\`Failed to \${action} request. Please try again.\`);
                 }
             }
             
+            removeRequestCard(requestId) {
+                const card = document.querySelector(\`[data-request-id="\${requestId}"]\`);
+                if (!card) return;
+                
+                card.classList.add('removing');
+                
+                setTimeout(() => {
+                    card.remove();
+                    this.checkEmpty();
+                }, 300);
+            }
+            
             setupEventStream() {
-                this.eventSource = new EventSource('/api/events?' + this.getAuthParam());
-                
-                this.eventSource.onopen = () => {
-                    this.updateStatus('connected', '🟢 Connected');
-                };
-                
-                this.eventSource.onerror = () => {
-                    this.updateStatus('disconnected', '🔴 Disconnected');
-                };
-                
-                this.eventSource.onmessage = (event) => {
-                    try {
-                        const data = JSON.parse(event.data);
-                        this.handleEvent(data);
-                    } catch (error) {
-                        console.error('Failed to parse event data:', error);
-                    }
-                };
+                try {
+                    this.eventSource = new EventSource('/api/events?' + this.getAuthParam());
+                    
+                    this.eventSource.onopen = () => {
+                        this.isSSEConnected = true;
+                        this.updateStatus('connected', '🟢 SSE Connected');
+                        console.log('SSE connection established');
+                    };
+                    
+                    this.eventSource.onerror = () => {
+                        this.isSSEConnected = false;
+                        this.updateStatus('disconnected', '🔴 SSE Disconnected');
+                        console.log('SSE connection error');
+                    };
+                    
+                    this.eventSource.onmessage = (event) => {
+                        try {
+                            const data = JSON.parse(event.data);
+                            this.handleEvent(data);
+                        } catch (error) {
+                            console.error('Failed to parse event data:', error);
+                        }
+                    };
+                } catch (error) {
+                    console.error('Failed to setup SSE:', error);
+                    this.isSSEConnected = false;
+                }
             }
             
             handleEvent(data) {
+                console.log('🔥 Received SSE event:', data.type, data);
+                
                 switch (data.type) {
-                    case 'requestCreated':
-                        this.loadPendingRequests();
-                        this.loadStats();
+                    case 'connected':
+                        this.isSSEConnected = true;
+                        console.log('Real-time connection established');
                         break;
-                    case 'requestDecided':
-                        this.loadPendingRequests();
-                        this.loadStats();
-                        break;
-                    case 'requestsUpdate':
-                        // Handle periodic updates from server
+                        
+                    case 'initialData':
+                        console.log('Received initial data:', data.requests?.length || 0, 'requests');
                         this.renderRequests(data.requests || []);
+                        this.lastDataHash = JSON.stringify(data.requests || []);
                         break;
+                        
+                    case 'requestCreated':
+                        console.log('🟢 New request created:', data.data.requestId);
+                        this.loadPendingRequests();
+                        this.loadStats();
+                        break;
+                        
+                    case 'requestDecided':
+                        console.log('🟡 Request decided:', data.data.requestId, '->', data.data.decision);
+                        this.removeRequestCard(data.data.requestId);
+                        this.loadStats();
+                        break;
+                        
+                    case 'ping':
+                        // Keep connection alive
+                        break;
+                        
+                    default:
+                        console.log('❓ Unknown event type:', data.type);
                 }
             }
             
             setupKeyboardShortcuts() {
                 document.addEventListener('keydown', (event) => {
-                    // Only handle shortcuts when not typing in input fields
                     if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') {
                         return;
                     }
@@ -883,18 +1077,12 @@ export class ApprovalServer {
                 indicator.className = \`status-indicator status-\${status}\`;
                 indicator.textContent = text;
                 
-                if (status === 'connected') {
-                    setTimeout(() => {
-                        indicator.style.opacity = '0';
-                    }, 3000);
-                } else {
-                    indicator.style.opacity = '1';
-                }
+                indicator.style.opacity = '1';
             }
             
             checkEmpty() {
                 const container = document.getElementById('requests-list');
-                const cards = container.querySelectorAll('.request-card');
+                const cards = container.querySelectorAll('.request-card:not(.removing)');
                 
                 if (cards.length === 0) {
                     container.innerHTML = \`
@@ -942,14 +1130,7 @@ export class ApprovalServer {
             }
         }
         
-        // Initialize the UI
         const approvalUI = new ApprovalUI();
-        
-        // Refresh data every 30 seconds
-        setInterval(() => {
-            approvalUI.loadStats();
-            approvalUI.loadPendingRequests();
-        }, 30000);
     </script>
 </body>
 </html>`;

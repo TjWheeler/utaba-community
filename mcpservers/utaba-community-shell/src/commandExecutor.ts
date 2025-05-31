@@ -209,6 +209,22 @@ export class CommandExecutor extends EventEmitter {
         estimatedDuration: job.estimatedDuration
       });
 
+      // 🔥 NEW: Trigger immediate scan if job requires approval to eliminate 5-second delay
+      if (pattern.requiresConfirmation && this.approvalManager) {
+        try {
+          await this.approvalManager.triggerAsyncJobScan();
+          this.logger.debug('CommandExecutor', 'Triggered immediate approval scan for new async job', 'executeCommandAsync', {
+            jobId: job.id
+          });
+        } catch (error) {
+          this.logger.warn('CommandExecutor', 'Failed to trigger immediate approval scan', 'executeCommandAsync', {
+            jobId: job.id,
+            error: error instanceof Error ? error.message : 'Unknown error'
+          });
+          // Don't fail the whole operation if scan trigger fails - polling will catch it
+        }
+      }
+
       // Calculate estimated approval time for UI
       const estimatedApprovalTime = pattern.requiresConfirmation ? 
         job.submittedAt + (5 * 60 * 1000) : // 5 minutes for approval
