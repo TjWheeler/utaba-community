@@ -153,6 +153,21 @@ const TOOLS: Tool[] = [
       properties: {},
       required: []
     }
+  },
+  {
+    name: 'mcp_shell_launch_approval_center',
+    description: 'Launch the approval center in the browser for command confirmations. Returns the URL if successful.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        forceRestart: {
+          type: 'boolean',
+          description: 'Force restart the approval server even if already running',
+          default: false
+        }
+      },
+      required: []
+    }
   }
 ];
 
@@ -237,6 +252,10 @@ class MCPShellServer {
 
           case 'mcp_shell_get_approval_status':
             result = await this.handleGetApprovalStatus();
+            break;
+
+          case 'mcp_shell_launch_approval_center':
+            result = await this.handleLaunchApprovalCenter(args);
             break;
 
           default:
@@ -414,6 +433,54 @@ class MCPShellServer {
         } as TextContent
       ]
     };
+  }
+
+  private async handleLaunchApprovalCenter(args: any) {
+    if (!this.commandExecutor) {
+      throw new McpError(ErrorCode.InternalError, 'Command executor not initialized');
+    }
+
+    const forceRestart = args?.forceRestart || false;
+
+    try {
+      const result = await this.commandExecutor.launchApprovalCenter(forceRestart);
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              success: true,
+              launched: result.launched,
+              url: result.url,
+              port: result.port,
+              alreadyRunning: result.alreadyRunning,
+              message: result.launched 
+                ? `Approval center launched successfully at ${result.url}`
+                : result.alreadyRunning 
+                  ? `Approval center already running at ${result.url}`
+                  : 'Approval system not available - no commands require approval'
+            }, null, 2)
+          } as TextContent
+        ]
+      };
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              success: false,
+              error: errorMessage,
+              message: 'Failed to launch approval center'
+            }, null, 2)
+          } as TextContent
+        ]
+      };
+    }
   }
 
   private async handleKillCommand(args: any) {

@@ -1,7 +1,7 @@
 {
   "name": "utaba-community-shell",
-  "version": "1.1.1",
-  "description": "MCP Server for controlled command execution in trusted development environments",
+  "version": "1.2.0",
+  "description": "MCP Server for controlled command execution with interactive approval system in trusted development environments",
   "main": "dist/index.js",
   "type": "module",
   "bin": {
@@ -32,7 +32,10 @@
     "typescript",
     "model-context-protocol",
     "claude",
-    "ai"
+    "ai",
+    "approval",
+    "security",
+    "browser-ui"
   ],
   "author": "Tim Wheeler",
   "license": "BSD-3-Clause",
@@ -61,7 +64,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "config"
   ],
   "engines": {
     "node": ">=18.0.0"

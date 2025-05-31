@@ -1,3 +1,126 @@
+/**
+ * Approval Server - Web UI for Command Approvals
+ * 
+ * Provides a secure web interface for approving/rejecting command executions
+ */
+
+import express, { Express, Request, Response } from 'express';
+import { Server as HttpServer } from 'http';
+import crypto from 'crypto';
+import { Logger } from '../logger.js';
+import { ApprovalQueue } from './queue.js';
+import { ApprovalRequest, ApprovalServerConfig, ApprovalServerError } from './types.js';
+
+export class ApprovalServer {
+  private app: Express;
+  private server: HttpServer | null = null;
+  private authToken: string;
+  private isRunning = false;
+  private port: number | null = null;
+
+  constructor(
+    private approvalQueue: ApprovalQueue,
+    private config: ApprovalServerConfig,
+    private logger: Logger
+  ) {
+    this.app = express();
+    this.authToken = config.authToken || this.generateAuthToken();
+    
+    this.setupMiddleware();
+    this.setupRoutes();
+    this.setupErrorHandling();
+  }
+
+  /**
+   * Start the approval server
+   */
+  async start(): Promise<{ port: number; url: string; authToken: string }> {
+    if (this.isRunning) {
+      throw new ApprovalServerError('Server is already running');
+    }
+
+    return new Promise((resolve, reject) => {
+      this.server = this.app.listen(this.config.port || 0, 'localhost', () => {
+        const address = this.server!.address();
+        if (!address || typeof address === 'string') {
+          reject(new ApprovalServerError('Failed to get server address'));
+          return;
+        }
+
+        this.port = address.port;
+        this.isRunning = true;
+        
+        const url = `http://localhost:${this.port}?token=${this.authToken}`;
+        
+        this.logger.info('ApprovalServer', 'Server started successfully', 'start', {
+          port: this.port,
+          url: url.replace(this.authToken, '***'),
+          authToken: this.authToken.substring(0, 8) + '***'
+        });
+
+        // Auto-launch browser if configured
+        if (this.config.autoLaunch) {
+          this.launchBrowser(url).catch(error => {
+            this.logger.warn('ApprovalServer', 'Failed to auto-launch browser', 'start', {
+              error: error.message
+            });
+          });
+        }
+
+        resolve({
+          port: this.port,
+          url,
+          authToken: this.authToken
+        });
+      });
+
+      this.server.on('error', (error: any) => {
+        this.logger.error('ApprovalServer', 'Server error', 'start', {
+          error: error.message,
+          code: error.code
+        });
+        reject(new ApprovalServerError(`Server failed to start: ${error.message}`));
+      });
+    });
+  }
+
+  /**
+   * Stop the approval server
+   */
+  async stop(): Promise<void> {
+    if (!this.isRunning || !this.server) {
+      return;
+    }
+
+    return new Promise((resolve) => {
+      this.server!.close(() => {
+        this.isRunning = false;
+        this.port = null;
+        this.server = null;
+        
+        this.logger.info('ApprovalServer', 'Server stopped', 'stop');
+        resolve();
+      });
+    });
+  }
+
+  /**
+   * Get server status
+   */
+  getStatus(): { 
+    isRunning: boolean; 
+    port: number | null; 
+    url: string | null;
+    authToken: string;
+  } {
+    const url = this.port ? `http://localhost:${this.port}?token=${this.authToken}` : null;
+    
+    return {
+      isRunning: this.isRunning,
+      port: this.port,
+      url,
+      authToken: this.authToken
+    };
   }
 
   // Private methods
@@ -160,13 +283,13 @@
           return res.status(404).json({ error: 'Request not found' });
         }
 
-        res.json({ request });
+        return res.json({ request });
       } catch (error) {
         this.logger.error('ApprovalServer', 'Failed to get request', 'api', {
           requestId: req.params.id,
           error: error instanceof Error ? error.message : 'Unknown error'
         });
-        res.status(500).json({ error: 'Failed to get request' });
+        return res.status(500).json({ error: 'Failed to get request' });
       }
     });
 
@@ -217,9 +340,25 @@
     });
   }
 
+  private setupErrorHandling(): void {
+    // Global error handler
+    this.app.use((err: any, req: Request, res: Response, next: any) => {
+      this.logger.error('ApprovalServer', 'Unhandled server error', 'errorHandler', {
+        error: err.message,
+        stack: err.stack,
+        path: req.path,
+        method: req.method
+      });
+
+      res.status(500).json({
+        error: 'Internal server error',
+        message: 'An unexpected error occurred'
+      });
+    });
+  }
+
   private async generateApprovalUI(): Promise<string> {
-    return `
-<!DOCTYPE html>
+    return `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -479,7 +618,7 @@
     <div class="container">
         <div class="header">
             <h1>🛡️ Command Approval Center</h1>
-            <p>Review and approve npx command executions for enhanced security</p>
+            <p>Review and approve command executions for enhanced security</p>
         </div>
         
         <div class="stats" id="stats">
@@ -582,7 +721,7 @@
                     <div class="request-card" data-request-id="\${request.id}">
                         <div class="request-header">
                             <div>
-                                <h3>Package Execution Request</h3>
+                                <h3>Command Execution Request</h3>
                                 <small>Requested \${timeAgo}</small>
                             </div>
                             <div class="risk-score \${riskClass}">
@@ -722,134 +861,6 @@
                     if (cards.length === 0) return;
                     
                     const firstCard = cards[0];
-                    const requestId = firstCard.dataset.requestId;
-                    
-                    if (event.key === 'a' || event.key === 'A') {
-                        event.preventDefault();
-                        this.approve(requestId);
-                    } else if (event.key === 'r' || event.key === 'R') {
-                        event.preventDefault();
-                        this.reject(requestId);
-                    }
-                });
-            }
-            
-            updateStatus(status, text) {
-                const indicator = document.getElementById('status-indicator');
-                indicator.className = \`status-indicator status-\${status}\`;
-                indicator.textContent = text;
-                
-                if (status === 'connected') {
-                    setTimeout(() => {
-                        indicator.style.opacity = '0';
-                    }, 3000);
-                } else {
-                    indicator.style.opacity = '1';
-                }
-            }
-            
-            checkEmpty() {
-                const container = document.getElementById('requests-list');
-                const cards = container.querySelectorAll('.request-card');
-                
-                if (cards.length === 0) {
-                    container.innerHTML = \`
-                        <div class="empty-state">
-                            <h3>No pending approvals</h3>
-                            <p>All command executions are up to date!</p>
-                        </div>
-                    \`;
-                }
-            }
-            
-            getAuthParam() {
-                const urlParams = new URLSearchParams(window.location.search);
-                const token = urlParams.get('token');
-                return \`token=\${token}\`;
-            }
-            
-            formatTimeAgo(timestamp) {
-                const now = Date.now();
-                const diff = now - timestamp;
-                const seconds = Math.floor(diff / 1000);
-                const minutes = Math.floor(seconds / 60);
-                const hours = Math.floor(minutes / 60);
-                
-                if (hours > 0) return \`\${hours}h ago\`;
-                if (minutes > 0) return \`\${minutes}m ago\`;
-                return \`\${seconds}s ago\`;
-            }
-            
-            escapeHtml(text) {
-                const div = document.createElement('div');
-                div.textContent = text;
-                return div.innerHTML;
-            }
-            
-            renderError(message) {
-                const container = document.getElementById('requests-list');
-                container.innerHTML = \`
-                    <div class="empty-state">
-                        <h3>Error</h3>
-                        <p>\${this.escapeHtml(message)}</p>
-                        <button class="btn" onclick="approvalUI.loadPendingRequests()">Retry</button>
-                    </div>
-                \`;
-            }
-        }
-        
-        // Initialize the UI
-        const approvalUI = new ApprovalUI();
-        
-        // Refresh data every 30 seconds
-        setInterval(() => {
-            approvalUI.loadStats();
-            approvalUI.loadPendingRequests();
-        }, 30000);
-    </script>
-</body>
-</html>`;
-  }
-
-  private generateAuthToken(): string {
-    return crypto.randomBytes(32).toString('hex');
-  }
-
-  private async launchBrowser(url: string): Promise<void> {
-    try {
-      const { spawn } = await import('child_process');
-      
-      let command: string;
-      let args: string[];
-
-      if (process.platform === 'win32') {
-        command = 'cmd';
-        args = ['/c', 'start', url];
-      } else if (process.platform === 'darwin') {
-        command = 'open';
-        args = [url];
-      } else {
-        command = 'xdg-open';
-        args = [url];
-      }
-
-      const child = spawn(command, args, { 
-        detached: true, 
-        stdio: 'ignore' 
-      });
-      
-      child.unref();
-
-      this.logger.info('ApprovalServer', 'Browser launched', 'launchBrowser', { url });
-    } catch (error) {
-      this.logger.warn('ApprovalServer', 'Failed to launch browser', 'launchBrowser', {
-        error: error instanceof Error ? error.message : 'Unknown error',
-        url
-      });
-    }
-  }
-}
-[0];
                     const requestId = firstCard.dataset.requestId;
                     
                     if (event.key === 'a' || event.key === 'A') {

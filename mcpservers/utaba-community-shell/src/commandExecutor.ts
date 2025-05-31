@@ -234,6 +234,49 @@ export class CommandExecutor extends EventEmitter {
     };
   }
 
+  /**
+   * Launch the approval center and return access information
+   */
+  async launchApprovalCenter(forceRestart: boolean = false): Promise<{
+    launched: boolean;
+    url?: string;
+    port?: number;
+    alreadyRunning: boolean;
+  }> {
+    // Check if approval system is available
+    if (!this.approvalManager) {
+      this.logger.info('CommandExecutor', 'Approval center not available - no commands require approval', 'launchApprovalCenter');
+      return {
+        launched: false,
+        alreadyRunning: false
+      };
+    }
+
+    try {
+      // Use the approval manager's launch method
+      const result = await this.approvalManager.launchApprovalCenter(forceRestart);
+      
+      this.logger.info('CommandExecutor', 'Approval center launch completed', 'launchApprovalCenter', {
+        launched: result.launched,
+        url: result.url,
+        port: result.port,
+        alreadyRunning: result.alreadyRunning,
+        forceRestart
+      });
+
+      return result;
+
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('CommandExecutor', 'Failed to launch approval center', 'launchApprovalCenter', {
+        error: errorMsg,
+        forceRestart
+      });
+      
+      throw new Error(`Failed to launch approval center: ${errorMsg}`);
+    }
+  }
+
   // Private methods
 
   private hasCommandsRequiringApproval(): boolean {
