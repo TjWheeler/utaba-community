@@ -107,6 +107,25 @@ export class ApprovalBridge extends EventEmitter {
   }
 
   /**
+   * 🔥 NEW: Trigger immediate scan for new pending jobs (called when new async job submitted)
+   */
+  async triggerImmediateScan(): Promise<void> {
+    if (!this.isRunning) {
+      return;
+    }
+
+    this.logger.debug('ApprovalBridge', 'Triggering immediate scan for new pending jobs', 'triggerImmediateScan');
+    
+    try {
+      await this.scanForPendingJobs();
+    } catch (error) {
+      this.logger.error('ApprovalBridge', 'Error in immediate scan', 'triggerImmediateScan', {
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  }
+
+  /**
    * Get bridge status
    */
   getStatus(): {
@@ -322,6 +341,7 @@ export class ApprovalBridge extends EventEmitter {
 
       this.emit('approvalProcessed', {
         asyncJobId: bridgedJob.asyncJobId,
+        approvalRequestId: bridgedJob.approvalRequestId, // 🔥 FIX: Add this for UI updates
         decision,
         decidedBy,
         reason

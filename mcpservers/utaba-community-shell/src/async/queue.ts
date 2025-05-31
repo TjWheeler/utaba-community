@@ -131,6 +131,15 @@ export class AsyncJobQueue extends EventEmitter {
     }
 
     try {
+      // Determine initial status based on requiresConfirmation flag
+      const initialStatus: JobStatus = request.requiresConfirmation === true 
+        ? 'pending_approval' 
+        : 'approved';  // AUTO-APPROVE if no confirmation needed
+      
+      const initialProgressMessage = request.requiresConfirmation === true
+        ? 'Submitted for approval'
+        : 'Approved automatically - queued for execution';  // Clear messaging
+
       // Create job record
       const job: JobRecord = {
         id: generateJobId(),
@@ -147,10 +156,13 @@ export class AsyncJobQueue extends EventEmitter {
         submittedAt: Date.now(),
         lastUpdated: Date.now(),
         
-        // Initial status
-        status: 'pending_approval' as JobStatus,
-        progressMessage: 'Submitted for approval',
-        currentPhase: 'approval',
+        // CRITICAL FIX: Set status based on approval requirement
+        status: initialStatus,
+        progressMessage: initialProgressMessage,
+        currentPhase: request.requiresConfirmation === true ? 'approval' : 'execution',
+        
+        // AUTO-SET approvedAt if no confirmation needed
+        approvedAt: request.requiresConfirmation === true ? undefined : Date.now(),
         
         // Estimated duration
         estimatedDuration: request.estimatedDuration || estimateExecutionDuration(
@@ -183,7 +195,9 @@ export class AsyncJobQueue extends EventEmitter {
         jobId: job.id,
         command: job.command,
         operationType: job.operationType,
-        estimatedDuration: job.estimatedDuration
+        estimatedDuration: job.estimatedDuration,
+        requiresConfirmation: request.requiresConfirmation,
+        initialStatus: job.status  // Log the resolved status
       });
 
       // Emit event for listeners
