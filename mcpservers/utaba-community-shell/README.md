@@ -639,6 +639,9 @@ This project is licensed under the BSD-3-Clause License - see the [LICENSE](LICE
 
 ## 🙏 Acknowledgments
 
+This solution was built by Tim Wheeler and Claude (with the Sonnet 4), and was an awesome collaboration.
+Find more open source from [Utaba AI](https://utaba.ai) at the [Utaba Git Hub Community Project](https://github.com/TjWheeler/utaba-communit)
+
 - Built with the [Model Context Protocol](https://modelcontextprotocol.io/) by Anthropic
 - Uses TypeScript for type safety and developer experience
 - Express.js powers the approval web interface
@@ -652,7 +655,7 @@ This project is licensed under the BSD-3-Clause License - see the [LICENSE](LICE
 ```bash
 npm install -g utaba-community-shell
 ```
-
+Then update the configuration of your AI tool.  Like Calude Desktop.
 **Give Claude the power of the command line - with human oversight for safety!** 🚀🛡️
 
 ---

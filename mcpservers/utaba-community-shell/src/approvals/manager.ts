@@ -1,7 +1,8 @@
 import path from 'path';
 import crypto from 'crypto';
 import { ApprovalQueue } from './queue.js';
-import { ApprovalServer } from './server.js';
+import { ApprovalServer } from './server.js'; // This should work now
+import { ApprovalBridge, ApprovalBridgeConfig, DEFAULT_APPROVAL_BRIDGE_CONFIG, BridgedJob } from './bridge.js';
 import {
   ApprovalRequest,
   ApprovalDecision,
@@ -12,20 +13,37 @@ import {
 import { Logger } from '../logger.js';
 
 /**
- * Main approval manager that coordinates queue and server
+ * Main approval manager that coordinates queue, server, and async bridge
  * 
  * Provides the high-level interface for command approval workflow
  */
 export class ApprovalManager {
   private queue: ApprovalQueue;
   private server: ApprovalServer | null = null;
+  private bridge: ApprovalBridge | null = null;
   private isInitialized = false;
 
   constructor(
     private baseDir: string,
-    private logger: Logger
+    private logger: Logger,
+    private bridgeConfig?: Partial<ApprovalBridgeConfig>
   ) {
     this.queue = new ApprovalQueue(baseDir, logger);
+    
+    // Initialize bridge if enabled
+    if (bridgeConfig?.enabled !== false) {
+      const fullBridgeConfig: ApprovalBridgeConfig = {
+        ...DEFAULT_APPROVAL_BRIDGE_CONFIG,
+        ...bridgeConfig,
+        asyncQueueBaseDir: bridgeConfig?.asyncQueueBaseDir || baseDir,
+        approvalQueueBaseDir: bridgeConfig?.approvalQueueBaseDir || baseDir
+      };
+      
+      this.bridge = new ApprovalBridge(fullBridgeConfig, logger);
+      
+      // Set up bridge event handlers
+      this.setupBridgeEventHandlers();
+    }
   }
 
   /**
@@ -38,10 +56,18 @@ export class ApprovalManager {
 
     try {
       await this.queue.initialize();
+      
+      // Start the approval bridge if enabled
+      if (this.bridge) {
+        await this.bridge.start();
+        this.logger.info('ApprovalManager', 'Approval bridge started', 'initialize');
+      }
+      
       this.isInitialized = true;
 
       this.logger.info('ApprovalManager', 'Approval system initialized', 'initialize', {
-        baseDir: this.baseDir
+        baseDir: this.baseDir,
+        bridgeEnabled: this.bridge !== null
       });
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Unknown error';
@@ -120,25 +146,141 @@ export class ApprovalManager {
   }
 
   /**
-   * Get pending approval requests
+   * Get pending approval requests (merges traditional queue + bridged async jobs)
    */
   async getPendingRequests(): Promise<ApprovalRequest[]> {
     if (!this.isInitialized) {
       throw new ApprovalError('Approval system not initialized', 'NOT_INITIALIZED');
     }
 
-    return this.queue.getPendingRequests();
+    try {
+      // Get traditional approval requests from queue
+      const queueRequests = await this.queue.getPendingRequests();
+      
+      // Get bridged async jobs from bridge
+      const bridgedRequests: ApprovalRequest[] = [];
+      if (this.bridge) {
+        const pendingJobIds = this.bridge.getPendingJobs();
+        
+        for (const jobId of pendingJobIds) {
+          const bridgedJob = this.bridge.getBridgedJob(jobId);
+          if (bridgedJob) {
+            // Transform bridged job to ApprovalRequest format
+            const approvalRequest: ApprovalRequest = {
+              id: bridgedJob.approvalRequestId,
+              command: bridgedJob.command,
+              args: bridgedJob.args,
+              workingDirectory: bridgedJob.workingDirectory,
+              timestamp: new Date(bridgedJob.timestamp).toISOString(), // Convert to ISO string
+              status: 'pending',
+              riskScore: bridgedJob.riskScore || 2,
+              riskFactors: [`Async job: ${bridgedJob.operationType || 'other'}`],
+              requestedBy: 'async_bridge',
+              timeout: 300000, // Default timeout
+              createdAt: bridgedJob.timestamp,
+              packageName: bridgedJob.command === 'npx' && bridgedJob.args.length > 0 ? bridgedJob.args[0] : undefined
+            };
+            
+            bridgedRequests.push(approvalRequest);
+          }
+        }
+      }
+      
+      // Merge both sources
+      const allRequests = [...queueRequests, ...bridgedRequests];
+      
+      this.logger.debug('ApprovalManager', 'Retrieved pending requests', 'getPendingRequests', {
+        queueRequests: queueRequests.length,
+        bridgedRequests: bridgedRequests.length,
+        totalRequests: allRequests.length
+      });
+      
+      return allRequests;
+
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('ApprovalManager', 'Failed to get pending requests', 'getPendingRequests', {
+        error: errorMsg
+      });
+      throw new ApprovalError(`Failed to get pending requests: ${errorMsg}`, 'REQUEST_ERROR');
+    }
   }
 
   /**
-   * Get approval queue statistics
+   * Get approval queue statistics (FIXED: Now combines traditional + bridged counts)
    */
   async getStats() {
     if (!this.isInitialized) {
       throw new ApprovalError('Approval system not initialized', 'NOT_INITIALIZED');
     }
 
-    return this.queue.getStats();
+    try {
+      // Get traditional queue stats
+      const queueStats = await this.queue.getStats();
+      const bridgeStatus = this.bridge?.getStatus();
+
+      // Count bridged async jobs by status
+      let bridgedPending = 0;
+      let bridgedApproved = 0;
+      let bridgedRejected = 0;
+      let bridgedTotal = 0;
+
+      if (this.bridge) {
+        const allBridgedJobs = this.bridge.getAllBridgedJobs();
+        bridgedTotal = allBridgedJobs.length;
+        
+        for (const job of allBridgedJobs) {
+          switch (job.status) {
+            case 'pending_approval':
+              bridgedPending++;
+              break;
+            case 'approved':
+              bridgedApproved++;
+              break;
+            case 'rejected':
+              bridgedRejected++;
+              break;
+          }
+        }
+      }
+
+      // Combine stats from both sources
+      const combinedStats = {
+        pending: queueStats.pending + bridgedPending,
+        approved: queueStats.approved + bridgedApproved,
+        rejected: queueStats.rejected + bridgedRejected,
+        total: queueStats.total + bridgedTotal,
+        bridge: bridgeStatus || { isRunning: false, bridgedJobCount: 0 },
+        // Include breakdown for debugging
+        breakdown: {
+          queue: {
+            pending: queueStats.pending,
+            approved: queueStats.approved,
+            rejected: queueStats.rejected,
+            total: queueStats.total
+          },
+          bridge: {
+            pending: bridgedPending,
+            approved: bridgedApproved,
+            rejected: bridgedRejected,
+            total: bridgedTotal
+          }
+        }
+      };
+
+      this.logger.debug('ApprovalManager', 'Retrieved combined stats', 'getStats', {
+        combinedStats
+      });
+
+      return combinedStats;
+
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('ApprovalManager', 'Failed to get stats', 'getStats', {
+        error: errorMsg
+      });
+      throw new ApprovalError(`Failed to get stats: ${errorMsg}`, 'STATS_ERROR');
+    }
   }
 
   /**
@@ -149,18 +291,28 @@ export class ApprovalManager {
       throw new ApprovalError('Approval system not initialized', 'NOT_INITIALIZED');
     }
 
-    await this.queue.approveRequest(requestId, decidedBy);
+    // Handle bridge if this was a bridged request
+    if (this.bridge && requestId.startsWith('async_')) {
+      await this.bridge.handleApprovalDecision(requestId, 'approve', decidedBy);
+    } else {
+      await this.queue.approveRequest(requestId, decidedBy);
+    }
   }
 
   /**
    * Manually reject a request (for CLI or other interfaces)
    */
-  async rejectRequest(requestId: string, decidedBy: string = 'manual'): Promise<void> {
+  async rejectRequest(requestId: string, decidedBy: string = 'manual', reason?: string): Promise<void> {
     if (!this.isInitialized) {
       throw new ApprovalError('Approval system not initialized', 'NOT_INITIALIZED');
     }
 
-    await this.queue.rejectRequest(requestId, decidedBy);
+    // Handle bridge if this was a bridged request
+    if (this.bridge && requestId.startsWith('async_')) {
+      await this.bridge.handleApprovalDecision(requestId, 'reject', decidedBy, reason);
+    } else {
+      await this.queue.rejectRequest(requestId, decidedBy);
+    }
   }
 
   /**
@@ -178,6 +330,17 @@ export class ApprovalManager {
       url: status.isRunning && status.port && status.authToken 
         ? `http://localhost:${status.port}?token=${status.authToken}`
         : undefined
+    };
+  }
+
+  /**
+   * Get bridge status
+   */
+  getBridgeStatus() {
+    return this.bridge?.getStatus() || { 
+      isRunning: false, 
+      bridgedJobCount: 0,
+      config: { enabled: false }
     };
   }
 
@@ -217,7 +380,8 @@ export class ApprovalManager {
         this.logger.info('ApprovalManager', 'Approval center launched successfully', 'launchApprovalCenter', {
           url: newStatus.url,
           port: newStatus.port,
-          wasAlreadyRunning: currentStatus.isRunning && !forceRestart
+          wasAlreadyRunning: currentStatus.isRunning && !forceRestart,
+          bridgeActive: this.bridge?.getStatus().isRunning || false
         });
 
         return {
@@ -259,11 +423,19 @@ export class ApprovalManager {
     this.logger.info('ApprovalManager', 'Shutting down approval system', 'shutdown');
 
     try {
+      // Stop bridge first
+      if (this.bridge) {
+        await this.bridge.stop();
+        this.bridge = null;
+      }
+
+      // Stop server
       if (this.server) {
         await this.server.stop();
         this.server = null;
       }
 
+      // Stop queue
       if (this.isInitialized) {
         await this.queue.shutdown();
       }
@@ -298,8 +470,8 @@ export class ApprovalManager {
         riskThreshold: 8
       };
 
-      // Create and start server
-      this.server = new ApprovalServer(this.queue, serverConfig, this.logger);
+      // 🔥 CRITICAL FIX: Pass manager (this) instead of queue to server
+      this.server = new ApprovalServer(this, serverConfig, this.logger);
       const { port, authToken, url } = await this.server.start();
 
       this.logger.info('ApprovalManager', 'Approval server started', 'ensureServerRunning', {
@@ -320,9 +492,41 @@ export class ApprovalManager {
   private generateSecureToken(): string {
     return crypto.randomBytes(32).toString('hex');
   }
+
+  /**
+   * Set up event handlers for the approval bridge
+   */
+  private setupBridgeEventHandlers(): void {
+    if (!this.bridge) return;
+
+    this.bridge.on('jobBridged', (bridgedJob) => {
+      this.logger.info('ApprovalManager', 'Async job bridged to approval system', 'bridgeEvent', {
+        asyncJobId: bridgedJob.asyncJobId,
+        approvalRequestId: bridgedJob.approvalRequestId,
+        command: bridgedJob.command
+      });
+    });
+
+    this.bridge.on('approvalProcessed', (result) => {
+      this.logger.info('ApprovalManager', 'Bridge processed approval decision', 'bridgeEvent', {
+        asyncJobId: result.asyncJobId,
+        decision: result.decision,
+        decidedBy: result.decidedBy
+      });
+    });
+
+    this.bridge.on('started', () => {
+      this.logger.info('ApprovalManager', 'Approval bridge started monitoring', 'bridgeEvent');
+    });
+
+    this.bridge.on('stopped', () => {
+      this.logger.info('ApprovalManager', 'Approval bridge stopped monitoring', 'bridgeEvent');
+    });
+  }
 }
 
 // Export everything from the approvals module
 export * from './types.js';
 export { ApprovalQueue } from './queue.js';
 export { ApprovalServer } from './server.js';
+export { ApprovalBridge } from './bridge.js';

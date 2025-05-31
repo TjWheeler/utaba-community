@@ -35,6 +35,8 @@ export type CommandPattern = CommandConfig;
 export const ConfigSchema = z.object({
   projectRoots: z.array(z.string()),
   defaultProjectRoot: z.string().optional(),
+  approvalQueueBaseDir: z.string().optional(),
+  asyncQueueBaseDir: z.string().optional(),
   trustedEnvironment: z.boolean(),
   defaultTimeout: z.number().min(1000).max(300000).default(30000),
   maxConcurrentCommands: z.number().min(1).max(10).default(3),
@@ -66,6 +68,7 @@ export interface EnvironmentOverrides {
   defaultTimeout?: number;
   startDirectory?: string;
   defaultProjectRoot?: string;
+  asyncQueueBaseDir?: string;
 }
 
 // Default configuration templates
@@ -75,6 +78,7 @@ export const DEFAULT_CONFIGS = {
     trustedEnvironment: true,
     defaultTimeout: 30000,
     maxConcurrentCommands: 3,
+    asyncQueueBaseDir: "",
     allowedCommands: [
       {
         command: 'npm',
@@ -102,6 +106,7 @@ export const DEFAULT_CONFIGS = {
     trustedEnvironment: true,
     defaultTimeout: 30000,
     maxConcurrentCommands: 3,
+    asyncQueueBaseDir:"",
     allowedCommands: [
       {
         command: 'npm',
@@ -179,7 +184,12 @@ export async function loadConfig(configPath?: string): Promise<Config> {
     const configWithOverrides = { ...rawConfig, ...envOverrides };
     
     const config = ConfigSchema.parse(configWithOverrides);
-
+    if(!config.asyncQueueBaseDir) {
+      config.asyncQueueBaseDir = path.join(process.cwd(), 'async-queue');
+    }
+    if(!config.approvalQueueBaseDir) {
+      config.approvalQueueBaseDir = path.join(process.cwd(), 'approval-queue');
+    }
     // if (config.startDirectory) { 
     //   console.log(`Setting start dir as project root ${config.startDirectory}`);
     //   config.projectRoots = config.projectRoots.concat([config.startDirectory]);

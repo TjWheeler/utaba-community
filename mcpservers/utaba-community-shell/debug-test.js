@@ -22,7 +22,11 @@ const commands = [
   //'{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}',
   //'{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"mcp_shell_execute_command","arguments":{"command":"npm","args":["run","build"],"workingDirectory":"projects/utaba-community/mcpservers/utaba-community-shell"}}}'
   //'{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"mcp_shell_execute_command","arguments":{"command":"node","args":["test.js"],"workingDirectory":"projects/utaba-community/mcpservers/utaba-community-shell"}}}'
-  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"mcp_shell_execute_command","arguments":{"command":"npx","args":["test.js"],"workingDirectory":"projects/utaba-community/mcpservers/utaba-community-shell"}}}'
+  //'{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"mcp_shell_execute_command","arguments":{"command":"npx","args":["test.js"],"workingDirectory":"projects/utaba-community/mcpservers/utaba-community-shell"}}}'
+ // '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"mcp_shell_execute_command_async","arguments":{"command":"echo","args":["Hello"],"workingDirectory":"projects/utaba-community/mcpservers/utaba-community-shell"}}}',
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"mcp_shell_launch_approval_center","arguments":{}}}'
+
+  
 ];
 
 commands.forEach((cmd, i) => {
