@@ -1,0 +1,19 @@
+feat: Add MCP_SANDBOX_NOQUOTA environment variable
+
+- Added noQuota boolean to SandboxConfig interface
+- Added MCP_SANDBOX_NOQUOTA environment variable (default: false)
+- QuotaManager deletes existing quota file on startup when no-quota mode enabled
+- All quota checks and updates bypassed when noQuota=true
+- Quota status returns "quota disabled" message when disabled
+- Added comprehensive test coverage for no-quota mode
+- Updated README with configuration examples and security warnings
+- Enhanced startup logging to highlight when quota is disabled
+- Maintains full quota functionality for when quota is re-enabled
+
+Security considerations:
+- Explicit opt-in only (never default)
+- Clear security warnings in logs and documentation
+- Use only in trusted development environments
+- Performance benefit: eliminates quota tracking overhead
+
+Breaking changes: None - fully backwards compatible

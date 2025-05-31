@@ -8,6 +8,8 @@ export interface QuotaInfo {
   availableBytes: number;
   totalQuotaBytes: number;
   percentUsed: number;
+  quotaDisabled?: boolean;
+  message?: string;
 }
 
 export interface QuotaEntry {
@@ -41,9 +43,34 @@ export class QuotaManager {
   }
   
   /**
+   * Check if quota system is disabled
+   */
+  isNoQuotaMode(): boolean {
+    return this.config.noQuota;
+  }
+  
+  /**
    * Initialize quota tracking by loading existing data or creating new
+   * If no-quota mode is enabled, delete existing quota file
    */
   async initialize(): Promise<void> {
+    if (this.isNoQuotaMode()) {
+      // Delete quota file if it exists
+      try {
+        await fs.promises.unlink(this.quotaFilePath);
+        logger.info('QuotaManager', 'Deleted existing quota file - no-quota mode enabled', 'initialize');
+      } catch (error) {
+        // File doesn't exist or can't be deleted - that's fine
+        if (error instanceof Error && (error as any).code !== 'ENOENT') {
+          logger.warn('QuotaManager', 'Could not delete quota file', 'initialize', {
+            error: error.message
+          });
+        }
+      }
+      logger.info('QuotaManager', 'Quota system disabled - unlimited access enabled', 'initialize');
+      return;
+    }
+    
     try {
       await this.loadQuotaData();
     } catch (error) {
@@ -85,6 +112,11 @@ export class QuotaManager {
    * Rebuild quota data by scanning the sandbox directory
    */
   async rebuildQuotaData(): Promise<void> {
+    if (this.isNoQuotaMode()) {
+      logger.debug('QuotaManager', 'Skipping quota rebuild - no-quota mode enabled', 'rebuildQuotaData');
+      return;
+    }
+    
     this.quotaData.clear();
     await this.scanDirectory(this.config.sandboxRoot);
     await this.saveQuotaData();
@@ -121,8 +153,17 @@ export class QuotaManager {
   
   /**
    * Check if operation would exceed quota
+   * Returns immediately if no-quota mode is enabled
    */
   checkQuota(additionalBytes: number, filePath?: string): void {
+    if (this.isNoQuotaMode()) {
+      logger.debug('QuotaManager', 'Quota check bypassed - no-quota mode enabled', 'checkQuota', {
+        additionalBytes,
+        filePath
+      });
+      return;
+    }
+    
     const currentUsage = this.getCurrentUsage();
     let adjustedUsage = currentUsage;
     
@@ -154,9 +195,17 @@ export class QuotaManager {
   }
   
   /**
-   * Update quota after file operation (now batched)
+   * Update quota after file operation (skipped if no-quota mode enabled)
    */
   async updateQuota(filePath: string, newSize: number): Promise<void> {
+    if (this.isNoQuotaMode()) {
+      logger.debug('QuotaManager', 'Quota update bypassed - no-quota mode enabled', 'updateQuota', {
+        filePath,
+        newSize
+      });
+      return;
+    }
+    
     const relativePath = path.relative(this.config.sandboxRoot, filePath);
     
     // Add to pending updates batch
@@ -182,6 +231,12 @@ export class QuotaManager {
    */
   private async processBatchedUpdates(): Promise<void> {
     if (this.isProcessingBatch || this.pendingUpdates.size === 0) {
+      return;
+    }
+    
+    // Skip if no-quota mode is enabled
+    if (this.isNoQuotaMode()) {
+      this.pendingUpdates.clear();
       return;
     }
     
@@ -238,6 +293,11 @@ export class QuotaManager {
    * Force immediate processing of any pending updates
    */
   async flushPendingUpdates(): Promise<void> {
+    if (this.isNoQuotaMode()) {
+      this.pendingUpdates.clear();
+      return;
+    }
+    
     if (this.quotaUpdateTimer) {
       clearTimeout(this.quotaUpdateTimer);
       this.quotaUpdateTimer = null;
@@ -250,8 +310,13 @@ export class QuotaManager {
   
   /**
    * Get current usage in bytes (includes pending updates)
+   * Returns 0 if no-quota mode is enabled
    */
   getCurrentUsage(): number {
+    if (this.isNoQuotaMode()) {
+      return 0;
+    }
+    
     let total = 0;
     
     // Start with committed data
@@ -279,9 +344,21 @@ export class QuotaManager {
   }
   
   /**
-   * Get quota information (includes pending updates)
+   * Get quota information
+   * Returns quota disabled message when no-quota mode is enabled
    */
   getQuotaInfo(): QuotaInfo {
+    if (this.isNoQuotaMode()) {
+      return {
+        usedBytes: 0,
+        availableBytes: Number.MAX_SAFE_INTEGER,
+        totalQuotaBytes: 0,
+        percentUsed: 0,
+        quotaDisabled: true,
+        message: 'Quota system is disabled. File system access is unrestricted.'
+      };
+    }
+    
     const usedBytes = this.getCurrentUsage();
     const totalQuotaBytes = this.config.quotaBytes;
     const availableBytes = Math.max(0, totalQuotaBytes - usedBytes);
@@ -299,6 +376,11 @@ export class QuotaManager {
    * Clean up quota entries for files that no longer exist
    */
   async cleanupQuota(): Promise<void> {
+    if (this.isNoQuotaMode()) {
+      logger.debug('QuotaManager', 'Skipping quota cleanup - no-quota mode enabled', 'cleanupQuota');
+      return;
+    }
+    
     // Flush any pending updates first
     await this.flushPendingUpdates();
     
@@ -329,7 +411,9 @@ export class QuotaManager {
    */
   async shutdown(): Promise<void> {
     try {
-      await this.flushPendingUpdates();
+      if (!this.isNoQuotaMode()) {
+        await this.flushPendingUpdates();
+      }
       logger.info('QuotaManager', 'Quota manager shutdown complete', 'shutdown');
     } catch (error) {
       logger.error('QuotaManager', 'Error during quota manager shutdown', 'shutdown', {
