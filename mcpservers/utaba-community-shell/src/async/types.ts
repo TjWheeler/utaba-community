@@ -164,6 +164,7 @@ export interface JobSubmissionRequest {
   conversationId?: string;
   sessionId?: string;
   estimatedDuration?: number;
+  requiresConfirmation?: boolean;  // NEW: Flag to indicate if approval needed
 }
 
 /**

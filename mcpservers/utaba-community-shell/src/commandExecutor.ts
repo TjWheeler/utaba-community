@@ -186,7 +186,7 @@ export class CommandExecutor extends EventEmitter {
       request.workingDirectory || ""
     );
 
-    // Create job submission request
+    // Create job submission request with approval flag
     const jobRequest: JobSubmissionRequest = {
       command: request.command,
       args: validation.sanitizedArgs || request.args,
@@ -194,7 +194,8 @@ export class CommandExecutor extends EventEmitter {
       timeout: request.timeout || this.securityValidator.getCommandTimeout(pattern),
       conversationId: options.conversationId,
       sessionId: this.currentSessionId,
-      userDescription: options.userDescription
+      userDescription: options.userDescription,
+      requiresConfirmation: pattern.requiresConfirmation || false  // PASS THE FLAG!
     };
 
     try {
@@ -206,37 +207,24 @@ export class CommandExecutor extends EventEmitter {
         command: job.command,
         operationType: job.operationType,
         requiresApproval: pattern.requiresConfirmation,
+        resolvedStatus: job.status,  // Log what actually happened
         estimatedDuration: job.estimatedDuration
       });
 
-      // 🔥 NEW: Trigger immediate scan if job requires approval to eliminate 5-second delay
-      if (pattern.requiresConfirmation && this.approvalManager) {
-        try {
-          await this.approvalManager.triggerAsyncJobScan();
-          this.logger.debug('CommandExecutor', 'Triggered immediate approval scan for new async job', 'executeCommandAsync', {
-            jobId: job.id
-          });
-        } catch (error) {
-          this.logger.warn('CommandExecutor', 'Failed to trigger immediate approval scan', 'executeCommandAsync', {
-            jobId: job.id,
-            error: error instanceof Error ? error.message : 'Unknown error'
-          });
-          // Don't fail the whole operation if scan trigger fails - polling will catch it
-        }
-      }
-
-      // Calculate estimated approval time for UI
-      const estimatedApprovalTime = pattern.requiresConfirmation ? 
+      // REMOVED: No need for approval system triggers if auto-approved
+      // The processor will pick up 'approved' jobs immediately
+      
+      // Calculate estimated approval time (only for pending approval)
+      const estimatedApprovalTime = job.status === 'pending_approval' ? 
         job.submittedAt + (5 * 60 * 1000) : // 5 minutes for approval
         undefined;
 
-      // Get approval URL if needed
+      // Get approval URL only if needed
       let approvalUrl: string | undefined;
-      if (pattern.requiresConfirmation && this.approvalManager) {
+      if (job.status === 'pending_approval' && this.approvalManager) {
         const serverStatus = this.approvalManager.getServerStatus();
         approvalUrl = serverStatus.url;
         
-        // Ensure approval server is running
         if (!serverStatus.isRunning) {
           await this.approvalManager.launchApprovalCenter();
           const updatedStatus = this.approvalManager.getServerStatus();
@@ -246,7 +234,7 @@ export class CommandExecutor extends EventEmitter {
 
       return {
         jobId: job.id,
-        status: job.status,
+        status: job.status,  // Will be 'approved' for whitelisted commands
         submittedAt: job.submittedAt,
         estimatedApprovalTime,
         approvalUrl
