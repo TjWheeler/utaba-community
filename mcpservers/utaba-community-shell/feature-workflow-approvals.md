@@ -63,7 +63,7 @@ The feature implements a browser-based approval interface that pauses command ex
 - **Backend**: Node.js 18+ with Express/Fastify for approval server
 - **Frontend**: Vanilla JavaScript with Server-Sent Events for real-time updates
 - **Communication**: File-based queue system with JSON manifests
-- **Security**: Localhost-only binding with optional token authentication
+- **Security**: Localhost-only binding with mandatory token authentication
 - **Integration**: Extends existing MCP Shell architecture
 
 ### System Components
@@ -165,7 +165,7 @@ interface ApprovalRequest {
 ### Security
 - **Local Only**: Approval server binds only to localhost
 - **No Remote Access**: No external network access or remote approval capabilities
-- **Token Protection**: Optional token-based authentication for approval server
+- **Token Protection**: Mandatory token-based authentication for approval server
 - **Audit Integrity**: Tamper-evident audit trail with checksums
 
 ### Reliability
@@ -179,7 +179,7 @@ interface ApprovalRequest {
 ### Phase 1: Core Infrastructure (Week 1)
 - [ ] File-based approval queue implementation
 - [ ] Command detection and interception in MCP Shell
-- [ ] Basic approval server with HTTP API
+- [ ] Basic approval server with HTTP API and mandatory token authentication
 - [ ] Simple HTML approval interface
 
 ### Phase 2: Enhanced UI (Week 2)
@@ -208,7 +208,7 @@ interface ApprovalServerConfig {
   port: number;                 // Server port (default: auto-assigned)
   autoLaunch: boolean;         // Auto-launch browser (default: true)
   timeout: number;             // Default approval timeout (default: 300000ms)
-  enableAuth: boolean;         // Enable token authentication
+  authToken: string;           // Required authentication token
   logLevel: string;            // Logging level for approval server
   riskThreshold: number;       // Auto-reject threshold (1-10, default: 9)
 }
@@ -233,6 +233,7 @@ interface RiskRule {
 - [ ] Audit trail maintains complete history of all approval decisions
 - [ ] Mobile interface allows approvals from phones/tablets
 - [ ] System recovers gracefully from approval server crashes
+- [ ] Token authentication is enforced for all browser access
 
 ### Quality Gates
 - [ ] Zero false positives - legitimate commands are not incorrectly flagged
@@ -240,6 +241,7 @@ interface RiskRule {
 - [ ] Complete audit trail with no missing approval decisions
 - [ ] Mobile UI passes usability testing on iOS and Android
 - [ ] Security review confirms no remote access vulnerabilities
+- [ ] Token authentication cannot be bypassed or disabled
 
 ## Risk Assessment
 
@@ -250,6 +252,7 @@ interface RiskRule {
 | File-based queue corruption or loss | Medium | Low | Atomic file operations, backup mechanisms, queue validation |
 | Performance impact on command execution | Low | Medium | Async approval processing, optimized file operations |
 | Security bypass through queue manipulation | High | Low | File system permissions, queue integrity checks |
+| Token authentication bypass | High | Low | Mandatory enforcement, no fallback mode, secure token generation |
 
 ## Future Enhancements
 
@@ -273,6 +276,7 @@ interface RiskRule {
 - **Risk Assessment**: Risk scoring algorithm accuracy and consistency
 - **Command Interception**: Proper detection and handling of target commands
 - **Server Management**: Approval server lifecycle and error handling
+- **Token Authentication**: Secure token generation, validation, and enforcement
 
 ### Integration Testing
 - **End-to-End Workflow**: Complete approval cycle from command to execution
@@ -285,6 +289,7 @@ interface RiskRule {
 - **Server Security**: Local-only access enforcement and token validation
 - **Injection Attacks**: Command injection through approval interface
 - **Privilege Escalation**: Attempts to gain elevated privileges through approval system
+- **Authentication Bypass**: Attempts to access approval server without valid token
 
 ### Usability Testing
 - **Approval Speed**: Time-to-decision measurements across different user types
@@ -299,4 +304,5 @@ interface RiskRule {
 | Version | Date | Author | Changes |
 |---|---|---|---|
 | 1.0 | 2025-05-31 | Development Team | Initial specification for workflow approvals feature |
+| 1.1 | 2025-05-31 | Development Team | Made token authentication mandatory for enhanced security |
 
