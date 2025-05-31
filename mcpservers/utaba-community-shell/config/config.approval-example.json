@@ -1,0 +1,49 @@
+{
+  "description": "Example configuration with approval system enabled",
+  "trustedEnvironment": true,
+  "projectRoots": ["C:\\Users\\username\\projects"],
+  "maxConcurrentCommands": 3,
+  "defaultTimeout": 120000,
+  "allowedCommands": [
+    {
+      "command": "npm",
+      "description": "Node.js package manager",
+      "allowedArgs": ["install", "run", "test", "build", "start", "stop"],
+      "timeout": 300000,
+      "workingDirRestriction": "project-only",
+      "requiresConfirmation": false
+    },
+    {
+      "command": "npx",
+      "description": "Execute npm packages - REQUIRES APPROVAL",
+      "allowedArgs": "*",
+      "timeout": 600000,
+      "workingDirRestriction": "project-only",
+      "requiresConfirmation": true
+    },
+    {
+      "command": "node",
+      "description": "Node.js runtime",
+      "allowedArgs": "*",
+      "timeout": 180000,
+      "workingDirRestriction": "project-only",
+      "requiresConfirmation": false
+    },
+    {
+      "command": "git",
+      "description": "Git version control",
+      "allowedArgs": ["status", "add", "commit", "push", "pull", "fetch", "checkout", "branch", "log", "diff"],
+      "timeout": 120000,
+      "workingDirRestriction": "project-only",
+      "requiresConfirmation": false
+    },
+    {
+      "command": "curl",
+      "description": "HTTP client - REQUIRES APPROVAL for external requests",
+      "allowedArgs": "*",
+      "timeout": 60000,
+      "workingDirRestriction": "any",
+      "requiresConfirmation": true
+    }
+  ]
+}

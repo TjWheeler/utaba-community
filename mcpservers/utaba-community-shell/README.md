@@ -1,494 +1,413 @@
-# Utaba MCP Shell - https://utaba.ai
+# Utaba MCP Shell
 
-A **development tooling** MCP (Model Context Protocol) server that provides **controlled command execution** for AI assistants like Claude. Think of it as a contolled, powerful command line where AI can run development commands without accessing your entire system.
+A production-ready MCP (Model Context Protocol) server that gives Claude secure command-line access with **browser-based approval system** for safe AI-human collaboration.
 
-## 🚨 **CRITICAL SECURITY NOTICE**
+🎯 **Perfect for:** Developers who want Claude to help with real development tasks  
+🛡️ **Built-in Safety:** Interactive approval workflow for risky commands  
+⚡ **Powerful:** Full access to npm, git, build tools, and custom commands
 
-**This tool operates under a "trusted development environment" security model:**
+## ✨ Quick Demo
 
-- **⚠️ npm command execution provides FULL SYSTEM ACCESS** through package installation scripts and package.json execution
-- **⚠️ No true sandboxing is possible** when allowing npm operations
-- **⚠️ Command whitelisting provides WORKFLOW CONTROL, not security isolation**
-- **✅ Use ONLY in development environments** where you trust the project dependencies and toolchain
+**Claude:** "Let me run your tests"
+```bash
+✅ npm test → runs immediately (trusted command)
+```
 
-### **Security Reality**
-- **npm commands can execute arbitrary code** through pre/post-install hooks, package.json scripts, and dependency behaviors
-- **This is an inherent limitation** of npm's design, not a flaw in this tool
-- **Command validation prevents accidents**, not malicious attacks
-- **Trust your environment** - this tool is for developers who already run these commands manually
+**Claude:** "Let me create a new React app"  
+```bash
+🛡️ npx create-react-app → opens browser for approval
+```
 
-## 🌟 Why Use This?
+**You:** Click "Approve" in browser → Command executes
 
-- **🎯 Controlled Execution** - Only pre-approved commands can run with validated arguments
-- **⚡ Real-time Streaming** - Watch long-running operations with live output
-- **🔄 Git Integration** - Complete version control workflow support
-- **📊 Process Management** - Monitor, track, and control running commands
-- **🛡️ Production Logging** - Comprehensive audit trails with file rotation
-- **🛠️ Easy Setup** - Template-based configuration for common development stacks
-- **🔍 Performance Monitoring** - Built-in timing and execution analytics
-- **🎮 Developer Friendly** - Designed for real development workflows
+---
 
 ## 🚀 Quick Start
 
-### Prerequisites
-
-You'll need **Node.js** (version 18 or higher) installed on your computer. If you don't have it:
-
-- **Windows/Mac**: Download from [nodejs.org](https://nodejs.org)
-- **Linux**: Use your package manager (e.g., `sudo apt install nodejs npm`)
-
-### Installation
-
+### 1. Install
 ```bash
 npm install -g utaba-community-shell
 ```
 
-### Setup with Claude Desktop
+### 2. Configure Claude Desktop
 
+Find your Claude Desktop config file:
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`  
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Linux**: `~/.config/claude/claude_desktop_config.json`
 
-1. **Configure Claude Desktop**:
-   
-   Find your config file:
-   - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
-   - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`  
-   - **Linux**: `~/.config/claude/claude_desktop_config.json`
-Note: If you don't see it, open Claud Desktop, goto Settings, Developer -> Edit Config.
+### 3. Add This Configuration
 
-2. **Add this configuration**:
-Note: This uses Windows style paths with 2 backslashes.  In Windows you need this.  If using Linux, use /path/to/dir.
-   ```json
-   {
-     "mcpServers": {
-       "mcp-shell": {
-         "command": "npx",
-         "args": ["utaba-community-shell"],
-         "env": {
-           "START_DIRECTORY": "C:\\Users\\YourName\\my-project",
-           "LOG_FILE": "C:\\temp\\mcp-shell.log",
-           "LOG_LEVEL": "info",
-           "LOG_MAX_SIZE_MB": "50",
-           "LOG_ROTATION_STRATEGY": "rotate",
-           "LOG_KEEP_FILES": "5",
-           "LOG_FORMAT": "text"
-         }
-       }
-     }
-   }
-   ```
-
-*Advanced Configuration*
-If you want to customise the default whitelisting, see below in the Technical Details.  You can create your own config file.
-
-3. **Restart Claude Desktop** and start commanding! 🚀
-
-## 🎯 What Can Claude Do Now?
-
-Once configured, Claude can help you with **powerful** development operations:
-
-- **📦 Package Management** - Run npm install, test, build with real-time progress
-- **🔄 Version Control** - Complete git workflow: status, add, commit, push, pull, merge
-- **🏗️ Project Building** - TypeScript compilation, linting, formatting with instant feedback
-- **🧪 Testing** - Run Jest, Vitest, and other test suites with streaming output
-- **🔍 Code Quality** - ESLint, Prettier, and other tools with detailed results
-- **⚡ Live Monitoring** - Watch process execution, kill hanging commands, view logs
-
-## 💪 **Command Execution Features**
-
-### **Whitelisted Commands**
-- **npm**: test, run, install, ci, audit, outdated, list, start, build
-- **git**: status, log, diff, add, commit, push, pull, fetch, merge, branch, checkout, stash, tag
-- **TypeScript**: tsc --noEmit, --build, --watch
-- **Linting**: eslint, prettier with configurable patterns
-- **Testing**: jest, vitest with full argument support
-- **npx**: Execute packages with confirmation prompts
-
-### **Security Validation**
-- **Argument Patterns**: Regex validation for safe command arguments
-- **Working Directory**: Commands restricted to project directories
-- **Injection Protection**: Basic detection of command injection attempts
-- **Environment Control**: Sanitized environment variable handling
-
-### **Process Management**
-```
-✅ Command executed: npm test (duration: 2.3s, exit: 0, pid: 12345)
-✅ Real-time streaming: 847 lines of output processed
-✅ Process monitoring: 3 active, 1 completed, 0 failed
-```
-
-## 🛡️ Security Features
-
-### Trust-Based Model
-- **Trusted Environment**: Assumes development machine security
-- **Command Whitelisting**: Only pre-approved commands execute
-- **Argument Validation**: Parameters checked against safe patterns
-- **Working Directory**: Commands confined to project boundaries
-
-### Access Control  
-- **Pattern Matching**: Regex validation for command arguments
-- **Path Restrictions**: Operations limited to project directories
-- **Environment Filtering**: Control over environment variable access
-- **Audit Logging**: Complete history of all executed commands
-
-### Monitoring
-- **Real-time Logging**: Track all command executions with timestamps
-- **Security Auditing**: Log all validation decisions and blocks
-- **Performance Tracking**: Monitor execution time and resource usage
-- **Process Oversight**: Track active processes and their lifecycle
-
-## 📋 Available Commands
-
-When Claude uses the shell, these **controlled** operations are available:
-
-| Command | Description | Security Level |
-|---------|-------------|----------------|
-| `execute_command` | Run whitelisted command | **Validated execution** |
-| `execute_command_streaming` | **⚡ Live output** streaming | **Real-time monitoring** |
-| `list_allowed_commands` | Show configuration | **Read-only access** |
-| `get_command_status` | Process monitoring | **System insights** |
-| `kill_command` | Stop running processes | **Process control** |
-| `get_logs` | View execution logs | **Audit access** |
-
----
-
-## 🧪 Testing & Development
-
-### Running Tests
-
-This project includes a comprehensive test suite built with Vitest for reliability and development confidence:
-
-```bash
-# Run all tests in watch mode (great for development)
-npm test
-
-# Run tests once and exit (good for CI/CD)
-npm run test:run
-
-# Run tests with coverage reporting
-npm run test:coverage
-
-# Open interactive test UI in browser
-npm run test:ui
-
-# Debug tests with breakpoints (IDE integration)
-npm run test:debug
-
-# Run tests in watch mode (alternative)
-npm run test:watch
-```
-
-### Test Coverage
-
-The test suite provides comprehensive coverage across:
-
-- **Unit Tests** - Individual component testing (security, config, command execution)
-- **Integration Tests** - End-to-end command execution workflows
-- **Security Tests** - Command injection, validation bypass attempts
-- **Performance Tests** - Execution timing and process management
-- **Error Handling** - Graceful failure and recovery scenarios
-
-### IDE Development
-
-Perfect for debugging individual test cases in your IDE:
-
-1. **VS Code**: Set breakpoints and use "Debug Test" command
-2. **IntelliJ/WebStorm**: Native Vitest integration with debugging
-3. **Other IDEs**: Use `npm run test:debug` and attach your debugger
-
-### Test Structure
-
-```
-src/__tests__/
-├── unit/                    # Component-specific tests
-│   ├── security.test.ts    # Security validation
-│   ├── config.test.ts      # Configuration loading
-│   ├── commandExecutor.test.ts # Command execution
-│   └── logger.test.ts      # Logging functionality
-├── integration/            # End-to-end tests
-│   └── server.test.ts     # Full workflow testing
-└── fixtures/              # Test data and samples
-```
-
-The tests are designed to:
-- **Run fast** - Optimized for quick feedback during development
-- **Be reliable** - No flaky tests, deterministic results
-- **Provide insights** - Clear error messages and detailed coverage
-- **Support debugging** - Easy to isolate and fix issues
-
----
-
-## 🔧 Technical Configuration
-
-### Environment Variables
-
-Configure the server behavior using these environment variables:
-
-#### Core Settings
-```bash
-# Required: Initial project directory
-START_DIRECTORY="/path/to/your/project"
-
-# Configuration file path
-MCP_SHELL_CONFIG_PATH="/path/to/mcp-shell-config.json"
-
-# Maximum concurrent commands (default: 3)
-MCP_SHELL_MAX_CONCURRENT="3"
-
-# Default command timeout in milliseconds (default: 30000)
-MCP_SHELL_DEFAULT_TIMEOUT="30000"
-```
-
-#### Logging Configuration
-```bash
-# Enable persistent file logging
-LOG_FILE="/path/to/mcp-shell.log"
-
-# Log level: 'debug', 'info', 'warn', 'error' (default: info)
-LOG_LEVEL="info"
-
-# Maximum log file size in MB before rotation (default: 10)
-LOG_MAX_SIZE_MB="10"
-
-# Log rotation strategy: 'rotate' or 'truncate' (default: rotate)
-LOG_ROTATION_STRATEGY="rotate"
-
-# Number of backup log files to keep (default: 3)
-LOG_KEEP_FILES="3"
-
-# Log format: 'text' or 'json' (default: text)
-LOG_FORMAT="text"
-```
-
-### Configuration Templates
-
-#### Node.js Development Setup (Recommended)
+**Simple Setup (Windows):**
 ```json
 {
   "mcpServers": {
     "mcp-shell": {
-       "command": "node",
-      "args": ["C:\\path\\utaba-community-sandboxfs\\dist\\index.js"],
+      "command": "npx",
+      "args": ["utaba-community-shell"],
       "env": {
-        "START_DIRECTORY": "C:\\path\\my-project",
-        "MCP_SHELL_CONFIG_PATH": "C:\\path\\my-project\\.mcp-shell-config.json",
-        "LOG_FILE": "C:\\path\\my-project\\mcp-shell.log",
-        "LOG_LEVEL": "info",
-        "MCP_SHELL_MAX_CONCURRENT": "5"
+        "MCP_SHELL_START_DIRECTORY": "C:\\Users\\YourName\\my-project"
       }
     }
   }
 }
 ```
 
-#### Setup with Enhanced Logging
+**Simple Setup (macOS/Linux):**
 ```json
 {
   "mcpServers": {
     "mcp-shell": {
-      "command": "mcp-shell",
-      "args": [],
+      "command": "npx", 
+      "args": ["utaba-community-shell"],
       "env": {
-        "START_DIRECTORY": "C:\\path\\my-project",
-        "MCP_SHELL_CONFIG_PATH": "C:\\path\\my-project\\.mcp-shell-config.json",
-        "LOG_FILE": "C:\\path\\my-project\\mcp-shell.log",
-        "LOG_LEVEL": "info",
-        "LOG_MAX_SIZE_MB": "50",
-        "LOG_ROTATION_STRATEGY": "rotate",
-        "LOG_KEEP_FILES": "5",
-        "LOG_FORMAT": "json"
+        "MCP_SHELL_START_DIRECTORY": "/Users/yourname/my-project"
       }
     }
   }
 }
 ```
 
-## 📊 **Command Execution Monitoring**
+### 4. Restart Claude Desktop
 
-### **Built-in Command Analytics**
+That's it! Claude now has secure command-line access.
 
-Ask Claude to show you execution metrics:
+---
 
+## 🎯 What Claude Can Do
+
+### ✅ Trusted Commands (Run Immediately)
+- **Package Management**: `npm install`, `npm test`, `npm run build`
+- **Version Control**: `git status`, `git add`, `git commit`, `git push` 
+- **TypeScript**: `tsc --build`, `tsc --noEmit`
+- **Code Quality**: `eslint`, `prettier`
+
+### 🛡️ Approval Required Commands
+- **Package Execution**: `npx create-react-app`, `npx playwright install`
+- **Network Requests**: `curl`, `wget`
+- **Custom risky commands**: Anything you configure with `requiresConfirmation: true`
+
+---
+
+## 🛡️ Interactive Approval System
+
+When Claude tries to run a risky command:
+
+1. **🚀 Browser Opens Automatically** → Secure approval interface
+2. **🔍 Command Review** → See exactly what will run, where, and why it might be risky
+3. **✅ Your Decision** → Approve or reject with full context
+4. **⚡ Instant Execution** → Command runs immediately after approval
+
+### Approval Interface Preview
 ```
-"Show me recent command executions with timing data"
-"What commands have been running and their status?"
-"Display the command execution log with performance metrics"
-"How many npm installs have we run this session?"
-```
+🛡️ Command Approval Center
+═══════════════════════════════════════════
 
-### **Enhanced Execution Viewer**
+Command Execution Request                Risk: 7/10
+npx create-react-app my-new-project
 
-The server provides detailed command insights:
+Working Directory: /Users/you/projects
+Package: create-react-app  
+Timeout: 300s
 
-**Command Log Example:**
-```
-20:15:42.123 INFO  [CommandExecutor] [executeCommand] npm test completed 
-    (duration: 2.3s, exit: 0, pid: 12345)
-20:15:45.200 INFO  [Security] [validateCommand] git commit allowed 
-    [SECURITY:ALLOWED] Valid arguments
-20:15:47.350 WARN  [Security] [validateCommand] Security violation detected 
-    [SECURITY:BLOCKED] Invalid argument pattern
-```
+⚠️ Risk Factors:
+• Downloads and executes remote code
+• Creates new files and directories  
+• Installs multiple dependencies
 
-### **Process Management Analytics**
-```
-Command Execution Report:
-✅ Total Commands: 47 (45 successful, 2 failed)
-✅ Active Processes: 2 (npm install, git fetch)
-✅ Average Duration: 1.2s (fastest: 0.1s, slowest: 15.3s)
-🎯 Security Blocks: 3 (all injection attempts)
-```
-
-### **Performance Benchmarks**
-
-| Command Type | Average Duration | Success Rate | Security Blocks |
-|-------------|------------------|--------------|-----------------|
-| **npm test** | 2.3s | 98% | 0 |
-| **git operations** | 0.8s | 99% | 2 (invalid refs) |
-| **TypeScript builds** | 4.1s | 95% | 0 |
-| **Linting** | 1.2s | 97% | 1 (path injection) |
-
-## 🔨 Development
-
-### Building from Source
-
-```bash
-# Clone and install dependencies
-git clone <repository>
-cd utaba-community-shell
-npm install
-
-# Build TypeScript
-npm run build
-
-# Run in development mode
-npm run dev
-
-# Test command validation
-mcp-shell test
+[✅ Approve]  [❌ Reject]
 ```
 
-### **Command Testing**
+---
 
-```bash
-# Initialize test configuration
-mcp-shell init
+## ⚙️ Configuration Examples
 
-# Run self-test
-mcp-shell test
-
-# Expected output:
-🧪 Running self-test...
-✓ Testing configuration system...
-✓ Testing security validation...
-✓ npm command available: true
-✓ git command available: true
-✅ Self-test completed successfully!
-```
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-**"Command not in whitelist"**
-- Check that the command is in your `allowedCommands` configuration
-- Verify command exists on your system (`which npm`, `which git`)
-- Ensure arguments match the allowed patterns
-
-**"Working directory not allowed"**
-- Verify the working directory is within your configured `projectRoots`
-- Check that `START_DIRECTORY` points to the correct location
-- Ensure directory permissions allow access
-
-**"Command execution timeout"**
-- Increase timeout in command configuration or environment variables
-- Use `execute_command_streaming` for long-running operations
-- Check for hanging processes with `get_command_status`
-
-**"Security validation failed"**
-- Review command arguments for potentially dangerous patterns
-- Check logs for specific validation failures
-- Ensure arguments match the configured `argPatterns`
-
-### **Command Debug Mode**
-
-Enable detailed command logging:
-```bash
-LOG_LEVEL="debug"
-```
-
-This will show:
-- **Command validation steps** for each execution
-- **Security decision rationale** 
-- **Process lifecycle events**
-- **Performance timing breakdowns**
-- **Environment variable handling**
-
-## 🚀 **Configuration Guide**
-
-### **Template Selection**
-
-Choose the right template for your project:
-
-1. **nodejs** (Recommended): Full development environment with npm, git, TypeScript, testing, and linting
-2. **minimal**: Basic setup with only essential npm and git commands
-
-### **Custom Configuration**
-
-Edit your `mcp-shell-config.json` to customize:
+### Simple Config (Most Users)
+Create `mcp-shell-config.json` in your project:
 
 ```json
 {
-  "projectRoots": ["/path/to/project"],
+  "projectRoots": ["/path/to/your/project"],
   "trustedEnvironment": true,
   "allowedCommands": [
     {
       "command": "npm",
-      "allowedArgs": ["test", "run", "install"],
-      "timeout": 120000,
-      "workingDirRestriction": "project-only"
+      "allowedArgs": ["install", "test", "run", "build"],
+      "description": "Package manager - runs immediately"
+    },
+    {
+      "command": "git",
+      "allowedArgs": ["status", "add", "commit", "push", "pull"],
+      "description": "Version control - runs immediately"
     }
   ]
 }
 ```
 
-### **Security Considerations**
+Note: In windows your paths should include double backslashes, eg; "C:\\Users\\MyProfile\\Repos\\MyProject"
 
-- ✅ **Review dependencies** before allowing npm operations
-- ✅ **Understand package.json scripts** in your project
-- ✅ **Monitor command execution logs** for unexpected behavior
-- ✅ **Use in trusted environments only** where you control dependencies
 
-## 🤝 Contributing
+### Full Development Config
+For comprehensive development environment:
 
-We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
-
-### Development Setup
-1. Fork the repository
-2. Create a feature branch  
-3. Add tests for new command patterns
-4. Ensure security validation works correctly
-5. Submit a pull request
-
-## 📄 License
-
-This project is licensed under the BSD-3-Clause License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- Built with the [Model Context Protocol](https://modelcontextprotocol.io/) by Anthropic
-- Uses TypeScript for type safety and developer experience
-- Designed for real-world development workflows
-- Inspired by the need for **controlled, secure** AI-human collaboration
+```json
+{
+  "description": "Full development environment with approval system",
+  "projectRoots": ["/Users/yourname/projects"],
+  "trustedEnvironment": true,
+  "maxConcurrentCommands": 5,
+  "defaultTimeout": 120000,
+  "allowedCommands": [
+    {
+      "command": "npm",
+      "description": "Node.js package manager",
+      "allowedArgs": ["install", "run", "test", "build", "start", "audit", "outdated"],
+      "timeout": 300000,
+      "workingDirRestriction": "project-only",
+      "requiresConfirmation": false
+    },
+    {
+      "command": "npx",
+      "description": "Execute npm packages - REQUIRES APPROVAL",
+      "allowedArgs": "*",
+      "timeout": 600000,
+      "workingDirRestriction": "project-only", 
+      "requiresConfirmation": true
+    },
+    {
+      "command": "git",
+      "description": "Git version control",
+      "allowedArgs": ["status", "add", "commit", "push", "pull", "fetch", "checkout", "branch", "log", "diff", "-F"],
+      "timeout": 120000,
+      "workingDirRestriction": "project-only",
+      "requiresConfirmation": false
+    },
+    {
+      "command": "tsc",
+      "description": "TypeScript compiler",
+      "allowedArgs": ["--build", "--watch", "--noEmit", "--listFiles", "--project"],
+      "timeout": 180000,
+      "workingDirRestriction": "project-only",
+      "requiresConfirmation": false
+    },
+    {
+      "command": "eslint",
+      "description": "ESLint linter",
+      "allowedArgs": ["--fix", "--cache", "--ext", "--format"],
+      "argPatterns": [
+        "^--ext\\s+\\.(js|ts|jsx|tsx)(,\\.(js|ts|jsx|tsx))*$",
+        "^\\./", "^src/", "^\\*\\*/\\*\\.(js|ts|jsx|tsx)$"
+      ],
+      "timeout": 90000,
+      "workingDirRestriction": "project-only",
+      "requiresConfirmation": false
+    },
+   {
+      "command": "curl",
+      "description": "HTTP client - REQUIRES APPROVAL",
+      "argPatterns": ["^(https?|ftp):\/\/[^\\s/$.?#].[^\\s]*$"],
+      "timeout": 60000,
+      "workingDirRestriction": "none",
+      "requiresConfirmation": true
+    }
+  ],
+  "logLevel": "info",
+  "logToFile": false
+}
+```
 
 ---
 
-## ⚠️ **Ready to Take Control?**
+## 🔧 Environment Variables
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `MCP_SHELL_START_DIRECTORY` | **Required:** Project root directory | `/Users/you/my-project` |
+| `MCP_SHELL_CONFIG_PATH` | Custom config file location | `./my-config.json` |
+| `LOG_LEVEL` | Logging detail: `debug`, `info`, `warn`, `error` | `info` |
+| `LOG_FILE` | Enable file logging | `./mcp-shell.log` |
+| `MCP_SHELL_MAX_CONCURRENT` | Max simultaneous commands | `3` |
+
+---
+
+## 🚨 Security Model
+
+### Trusted Development Environment
+- ✅ **Use only in development environments you trust**
+- ✅ **npm commands have full system access** (this is npm's design, not a limitation)
+- ✅ **Command whitelisting prevents accidents**, approval system adds human oversight
+- ✅ **Perfect for AI-human collaboration** with appropriate safeguards
+
+### What's Protected
+- **Command Validation**: Only whitelisted commands can run
+- **Argument Checking**: Parameters validated against safe patterns  
+- **Directory Restrictions**: Commands limited to project directories
+- **Human Oversight**: Interactive approval for risky operations
+- **Audit Logging**: Complete history of all commands
+
+### What Requires Approval
+Configure any command with `requiresConfirmation: true`:
+- **External package execution** (`npx`)
+- **Network requests** (`curl`, `wget`)
+- **System modifications** (custom admin commands)
+- **File operations outside project** (if configured)
+
+---
+
+## 💡 Real-World Examples
+
+### "Claude, help me start a new React project"
+```bash
+# Claude will request approval for:
+npx create-react-app my-awesome-app
+
+# After your approval:
+✅ Project created
+✅ Dependencies installed  
+✅ Ready for development
+```
+
+### "Run my tests and check git status"
+```bash
+# These run immediately (trusted):
+npm test ✅
+git status ✅
+
+# Results displayed in real-time
+```
+
+### "Deploy my changes"
+```bash
+# Trusted commands run immediately:
+git add . ✅
+git commit -m "Deploy updates" ✅
+git push ✅
+
+# If you configured deployment commands to require approval:
+npm run deploy 🛡️ → browser approval → ✅
+```
+
+---
+
+## 🛠️ Advanced Features
+
+### Real-Time Command Streaming
+See command output as it happens:
+```bash
+npm install  # Long running command
+📊 Installing dependencies... 47% complete
+📊 Building native modules... 
+📊 ✅ Completed in 23.4s
+```
+
+### Process Management
+- **Monitor active commands**: See what's running and for how long
+- **Kill hanging processes**: Stop commands that get stuck
+- **Execution history**: Review past commands with timing data
+
+### Comprehensive Logging
+```bash
+# Enable detailed logging
+LOG_LEVEL="info" LOG_FILE="./mcp-shell.log"
+```
+
+### Approval Analytics  
+Track approval patterns:
+- **Decision history**: See what you've approved/rejected
+- **Risk assessment**: Understand why commands are flagged
+- **Performance metrics**: Average approval time, success rates
+
+---
+
+## 🐛 Troubleshooting
+
+### Browser Won't Open for Approvals
+- Check default browser settings
+- Try manually visiting the approval URL shown in Claude's response
+- Ensure localhost connections aren't blocked
+
+### "Command not allowed"
+- Verify the command is in your `allowedCommands` config
+- Check that arguments match the `allowedArgs` or `argPatterns`
+- Ensure the command exists on your system
+
+### "Working directory not allowed"  
+- Confirm directory is within your `projectRoots`
+- Check `MCP_SHELL_START_DIRECTORY` points to correct location
+- Verify directory permissions
+
+### Approval Timeouts
+- Default approval timeout is 5 minutes
+- Check if browser window closed accidentally
+- Verify approval server is still running
+
+---
+
+## 🎯 Best Practices
+
+### Security
+- ✅ **Review approval requests carefully** - understand what will be executed
+- ✅ **Use project-specific configs** - tailor permissions to each project
+- ✅ **Enable logging** - track command history for debugging
+- ✅ **Regular config reviews** - ensure permissions match current needs
+
+### Performance  
+- ✅ **Set appropriate timeouts** - longer for build commands, shorter for quick operations
+- ✅ **Limit concurrent commands** - prevent system overload
+- ✅ **Use streaming for long operations** - better user experience
+
+### Development Workflow
+- ✅ **Start with restrictive config** - add permissions as needed
+- ✅ **Test approval workflow** - ensure browser integration works
+- ✅ **Document custom commands** - help team understand permissions
+
+---
+
+## 📚 What's New in This Version
+
+### 🛡️ Interactive Approval System
+- **Browser-based approval interface** with risk assessment
+- **Real-time updates** via Server-Sent Events  
+- **Keyboard shortcuts** for faster decisions
+- **Mobile-friendly** responsive design
+
+### ⚡ Enhanced Command Execution
+- **Async job queue** for long-running commands
+- **Real-time output streaming** with progress indicators
+- **Process management** with kill capabilities
+- **Comprehensive logging** with rotation support
+
+### 🔧 Improved Configuration
+- **Template-based setup** for common development stacks
+- **Environment variable overrides** for easy customization
+- **Validation and error reporting** for configuration issues
+
+---
+
+## 🤝 Contributing
+
+We welcome contributions! Areas of focus:
+
+- **Risk assessment improvements** - better command risk scoring
+- **UI enhancements** - approval interface improvements  
+- **New command templates** - support for more development tools
+- **Security features** - additional validation and protection
+
+## 📄 License
+
+BSD-3-Clause License - see [LICENSE](LICENSE) file for details.
+
+## 🙏 Credits
+
+Built by Tim Wheeler in collaboration with Claude (Anthropic). 
+From the [Utaba AI](https://utaba.ai) open source community.
+
+---
+
+**Ready to give Claude secure command-line superpowers?**
 
 ```bash
 npm install -g utaba-community-shell
 ```
 
-**Give Claude the power of the command line - trusted environment only!** 🚀
-
----
-
-**Happy AI-powered development - now with full command control!** ⚡🤖✨
+**Happy AI-powered development!** 🚀🤖✨

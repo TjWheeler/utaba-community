@@ -33,7 +33,10 @@ export type CommandPattern = CommandConfig;
 
 // Main configuration schema
 export const ConfigSchema = z.object({
-  projectRoots: z.array(z.string()).min(1, 'At least one project root is required'),
+  projectRoots: z.array(z.string()),
+  defaultProjectRoot: z.string().optional(),
+  approvalQueueBaseDir: z.string().optional(),
+  asyncQueueBaseDir: z.string().optional(),
   trustedEnvironment: z.boolean(),
   defaultTimeout: z.number().min(1000).max(300000).default(30000),
   maxConcurrentCommands: z.number().min(1).max(10).default(3),
@@ -41,6 +44,7 @@ export const ConfigSchema = z.object({
   logLevel: LogLevel.default('info'),
   logToFile: z.boolean().default(false),
   logFilePath: z.string().optional(),
+  startDirectory: z.string().optional(),
   blockedEnvironmentVars: z.array(z.string()).default([]),
   allowedEnvironmentVars: z.array(z.string()).optional()
 }).refine(data => {
@@ -62,19 +66,23 @@ export interface EnvironmentOverrides {
   logLevel?: LogLevel;
   maxConcurrentCommands?: number;
   defaultTimeout?: number;
+  startDirectory?: string;
+  defaultProjectRoot?: string;
+  asyncQueueBaseDir?: string;
 }
 
 // Default configuration templates
 export const DEFAULT_CONFIGS = {
   minimal: {
-    projectRoots: [process.cwd()],
+    projectRoots: [],
     trustedEnvironment: true,
     defaultTimeout: 30000,
     maxConcurrentCommands: 3,
+    asyncQueueBaseDir: "",
     allowedCommands: [
       {
         command: 'npm',
-        allowedArgs: ['test', 'run', 'install', 'ci'],
+        allowedArgs: ['test', 'run', 'install', 'ci', 'build'],
         description: 'Node Package Manager',
         timeout: 60000,
         workingDirRestriction: 'project-only' as const
@@ -90,17 +98,19 @@ export const DEFAULT_CONFIGS = {
     ],
     logLevel: 'info' as const,
     logToFile: false,
-    blockedEnvironmentVars: ['HOME', 'PATH', 'USER']
+    blockedEnvironmentVars: ['HOME', 'PATH', 'USER'],
+    startDirectory: "",
   },
   nodejs: {
-    projectRoots: [process.cwd()],
+    projectRoots: [],
     trustedEnvironment: true,
     defaultTimeout: 30000,
     maxConcurrentCommands: 3,
+    asyncQueueBaseDir:"",
     allowedCommands: [
       {
         command: 'npm',
-        allowedArgs: ['test', 'run', 'install', 'ci', 'audit', 'outdated', 'list'],
+        allowedArgs: ['test', 'run', 'install', 'ci', 'audit', 'outdated', 'list', 'build'],
         description: 'Node Package Manager',
         timeout: 60000,
         workingDirRestriction: 'project-only' as const
@@ -137,7 +147,7 @@ export const DEFAULT_CONFIGS = {
       },
       {
         command: 'git',
-        allowedArgs: ['status', 'diff', 'log', 'branch', 'add', 'commit', 'push', 'pull'],
+        allowedArgs: ['status', 'diff', 'log', 'branch', 'add', 'commit', 'push', 'pull', '-F'],
         description: 'Git version control',
         timeout: 30000,
         workingDirRestriction: 'project-only' as const
@@ -153,7 +163,8 @@ export const DEFAULT_CONFIGS = {
     ],
     logLevel: 'info' as const,
     logToFile: false,
-    blockedEnvironmentVars: ['HOME', 'PATH', 'USER']
+    blockedEnvironmentVars: ['HOME', 'PATH', 'USER'],
+    startDirectory: "",
   }
 } as const;
 
@@ -173,13 +184,23 @@ export async function loadConfig(configPath?: string): Promise<Config> {
     const configWithOverrides = { ...rawConfig, ...envOverrides };
     
     const config = ConfigSchema.parse(configWithOverrides);
+    if(!config.asyncQueueBaseDir) {
+      config.asyncQueueBaseDir = path.join(process.cwd(), 'async-queue');
+    }
+    if(!config.approvalQueueBaseDir) {
+      config.approvalQueueBaseDir = path.join(process.cwd(), 'approval-queue');
+    }
+    // if (config.startDirectory) { 
+    //   console.log(`Setting start dir as project root ${config.startDirectory}`);
+    //   config.projectRoots = config.projectRoots.concat([config.startDirectory]);
+    // }
+
     await validateConfig(config);
+   
     return config;
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
       // Configuration file not found - use nodejs template as default
-      console.warn(`Configuration file not found: ${finalPath}. Using default nodejs configuration.`);
-      console.warn('Run "mcp-shell init" to create a custom configuration file.');
       const config = ConfigSchema.parse(DEFAULT_CONFIGS.nodejs);
       await validateConfig(config);
       return config;
@@ -191,6 +212,21 @@ export async function loadConfig(configPath?: string): Promise<Config> {
     }
     
     throw new Error(`Failed to load configuration: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
+export async function startDirectory(): Promise<string> {
+  const startDir = process.env.MCP_SHELL_START_DIRECTORY || "";
+  
+  try {
+    process.chdir(startDir);
+    const stat = await fs.stat(startDir);
+    if (!stat.isDirectory()) {
+      throw new Error(`Start directory ${startDir} is not a directory`);
+    }
+    return startDir;
+  } catch (error) {
+    throw new Error(`Start directory ${startDir} is not accessible: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 
@@ -268,13 +304,13 @@ export function getEnvironmentOverrides(): EnvironmentOverrides {
   const overrides: EnvironmentOverrides = {};
 
   // Log level override
-  const logLevel = process.env.UTABA_MCP_SHELL_LOG_LEVEL;
+  const logLevel = process.env.MCP_SHELL_LOG_LEVEL;
   if (logLevel && ['error', 'warn', 'info', 'debug'].includes(logLevel)) {
     overrides.logLevel = logLevel as LogLevel;
   }
 
   // Max concurrent commands override
-  const maxConcurrent = process.env.UTABA_MCP_SHELL_MAX_CONCURRENT;
+  const maxConcurrent = process.env.MCP_SHELL_MAX_CONCURRENT;
   if (maxConcurrent) {
     const parsed = parseInt(maxConcurrent, 10);
     if (!isNaN(parsed) && parsed >= 1 && parsed <= 10) {
@@ -283,12 +319,17 @@ export function getEnvironmentOverrides(): EnvironmentOverrides {
   }
 
   // Default timeout override
-  const timeout = process.env.UTABA_MCP_SHELL_TIMEOUT;
+  const timeout = process.env.MCP_SHELL_TIMEOUT;
   if (timeout) {
     const parsed = parseInt(timeout, 10);
     if (!isNaN(parsed) && parsed >= 1000 && parsed <= 300000) {
       overrides.defaultTimeout = parsed;
     }
+  }
+
+const startDirectory = process.env.MCP_SHELL_START_DIRECTORY;
+  if (startDirectory) {
+    overrides.startDirectory = startDirectory;
   }
 
   return overrides;

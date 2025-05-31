@@ -23,6 +23,7 @@ export function createMockConfig(overrides: Partial<Config> = {}): Config {
     trustedEnvironment: true,
     defaultTimeout: 30000,
     maxConcurrentCommands: 3,
+    startDirectory: process.cwd(),
     allowedCommands: [
       {
         command: 'echo',

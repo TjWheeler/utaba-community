@@ -12,29 +12,92 @@ describe('SecurityValidator', () => {
 
   describe('command validation', () => {
     it('should allow whitelisted commands', () => {
-      const result = validator.validateCommand('echo', ['test']);
+      const result = validator.validateCommand('echo', ['test'], "", process.cwd());
       
       expect(result.allowed).toBe(true);
       expect(result.matchedPattern).toBeDefined();
       expect(result.matchedPattern?.command).toBe('echo');
     });
 
+    // security-001: Execute whitelisted command (npm test)
+    it('security-001: should allow npm test command when package.json exists', async () => {
+      // Create a temporary directory with package.json for testing
+      const { promises: fs } = await import('fs');
+      const path = await import('path');
+      const os = await import('os');
+      
+      const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'mcp-shell-test-'));
+      const packageJsonPath = path.join(tempDir, 'package.json');
+      
+      // Create a minimal package.json
+      const packageJson = {
+        name: 'test-project',
+        version: '1.0.0',
+        scripts: {
+          test: 'echo "test execution"'
+        }
+      };
+      
+      await fs.writeFile(packageJsonPath, JSON.stringify(packageJson, null, 2));
+      
+      try {
+        // Create validator with temp directory as project root
+        const config = createMockConfig({
+          projectRoots: [tempDir],
+          allowedCommands: [{
+            command: 'npm',
+            allowedArgs: ['test'],
+            description: 'NPM test command',
+            timeout: 30000,
+            workingDirRestriction: 'project-only',
+            requiresConfirmation: false
+          }]
+        });
+        
+        const testValidator = new SecurityValidator(config);
+        
+        // Test npm test command validation
+        const result = testValidator.validateCommand('npm', ['test'], '', tempDir);
+        
+        // Assertions for security-001
+        expect(result.allowed).toBe(true);
+        expect(result.matchedPattern).toBeDefined();
+        expect(result.matchedPattern?.command).toBe('npm');
+        expect(result.matchedPattern?.description).toBe('NPM test command');
+        expect(result.sanitizedArgs).toEqual(['test']);
+        expect(result.reason).toBeUndefined();
+        
+        // Verify the command pattern details
+        expect(result.matchedPattern?.timeout).toBe(30000);
+        expect(result.matchedPattern?.workingDirRestriction).toBe('project-only');
+        expect(result.matchedPattern?.requiresConfirmation).toBe(false);
+        
+      } finally {
+        // Cleanup
+        try {
+          await fs.rm(tempDir, { recursive: true, force: true });
+        } catch (error) {
+          // Ignore cleanup errors
+        }
+      }
+    });
+
     it('should reject non-whitelisted commands', () => {
-      const result = validator.validateCommand('rm', ['-rf', '/']);
+      const result = validator.validateCommand('rm', ['-rf', '/'],"", process.cwd());
       
       expect(result.allowed).toBe(false);
       expect(result.reason).toContain('not in the whitelist');
     });
 
     it('should validate arguments against allowed list', () => {
-      const result = validator.validateCommand('echo', ['forbidden']);
+      const result = validator.validateCommand('echo', ['forbidden'],"", process.cwd());
       
       expect(result.allowed).toBe(false);
       expect(result.reason).toContain('not in allowed list');
     });
 
     it('should allow valid arguments', () => {
-      const result = validator.validateCommand('echo', ['test']);
+      const result = validator.validateCommand('echo', ['test'],"", process.cwd());
       
       expect(result.allowed).toBe(true);
       expect(result.sanitizedArgs).toEqual(['test']);
@@ -53,7 +116,7 @@ describe('SecurityValidator', () => {
 
       for (const pattern of dangerousPatterns) {
         const [cmd, ...args] = pattern.split(' ');
-        const result = validator.validateCommand(cmd, args);
+        const result = validator.validateCommand(cmd, args,"", process.cwd());
         
         // Should be blocked either by whitelist or injection detection
         expect(result.allowed).toBe(false);
@@ -66,7 +129,7 @@ describe('SecurityValidator', () => {
         allowedCommands: [{
           command: 'echo',
           argPatterns: ['^[a-zA-Z0-9\\s\\-_\\.]+$'], // Allow safe characters
-          description: 'Echo command with pattern validation'
+          description: 'Echo command with pattern validation',
         }]
       });
       
@@ -80,7 +143,7 @@ describe('SecurityValidator', () => {
 
       for (const pattern of safePatterns) {
         const [cmd, ...args] = pattern.split(' ');
-        const result = flexibleValidator.validateCommand(cmd, args);
+        const result = flexibleValidator.validateCommand(cmd, args,"", process.cwd());
         
         expect(result.allowed).toBe(true);
       }

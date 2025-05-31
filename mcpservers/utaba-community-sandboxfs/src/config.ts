@@ -28,7 +28,32 @@ export interface SandboxConfig {
   // Allowed file extensions (whitelist) - if set, only these are allowed
   // Empty array means all extensions allowed (except blocked ones)
   allowedExtensions: string[];
+
+  // NEW: Operation size limits
+  maxFileSize?: number;          // Max individual file size (bytes)
+  maxContentLength?: number;     // Max content length per operation (bytes)
+  
+  // Optional: Operation-specific limits
+  limits?: {
+    writeFile?: number;
+    appendFile?: number;
+    readFile?: number;
+  };
+
+  // NEW: Disable quota system entirely
+  noQuota: boolean;
 }
+
+// Default limits for operations
+export const DEFAULT_LIMITS = {
+  maxFileSize: 50 * 1024 * 1024,      // 50MB
+  maxContentLength: 10 * 1024 * 1024, // 10MB per operation
+  limits: {
+    writeFile: 10 * 1024 * 1024,      // 10MB
+    appendFile: 5 * 1024 * 1024,      // 5MB  
+    readFile: 100 * 1024 * 1024       // 100MB (reads can be larger)
+  }
+};
 
 // Default configuration
 export const DEFAULT_CONFIG: SandboxConfig = {
@@ -39,7 +64,12 @@ export const DEFAULT_CONFIG: SandboxConfig = {
   allowDirectoryOps: true,
   allowBinary: true,
   blockedExtensions: [],
-  allowedExtensions: []
+  allowedExtensions: [],
+  noQuota: false, // Quota enabled by default for safety
+  // Apply default limits
+  maxFileSize: DEFAULT_LIMITS.maxFileSize,
+  maxContentLength: DEFAULT_LIMITS.maxContentLength,
+  limits: DEFAULT_LIMITS.limits
 };
 
 // Common dangerous extensions for different platforms
@@ -62,12 +92,23 @@ export function loadConfig(): SandboxConfig {
     allowDelete: process.env.MCP_SANDBOX_ALLOW_DELETE !== 'false',
     allowDirectoryOps: process.env.MCP_SANDBOX_ALLOW_DIRECTORY_OPS !== 'false',
     allowBinary: process.env.MCP_SANDBOX_ALLOW_BINARY !== 'false',
+    noQuota: process.env.MCP_SANDBOX_NOQUOTA === 'true', // Explicit opt-in only
     blockedExtensions: process.env.MCP_SANDBOX_BLOCKED_EXTENSIONS
       ? process.env.MCP_SANDBOX_BLOCKED_EXTENSIONS.split(',').map(ext => ext.trim().toLowerCase())
       : DEFAULT_CONFIG.blockedExtensions,
     allowedExtensions: process.env.MCP_SANDBOX_ALLOWED_EXTENSIONS
       ? process.env.MCP_SANDBOX_ALLOWED_EXTENSIONS.split(',').map(ext => ext.trim().toLowerCase())
-      : DEFAULT_CONFIG.allowedExtensions
+      : DEFAULT_CONFIG.allowedExtensions,
+    
+    // NEW: Load size limits from environment
+    maxFileSize: parseInt(process.env.MCP_SANDBOX_MAX_FILE_SIZE || '52428800'), // 50MB
+    maxContentLength: parseInt(process.env.MCP_SANDBOX_CONTENT_LENGTH || '10485760'), // 10MB
+    
+    limits: {
+      writeFile: parseInt(process.env.MCP_SANDBOX_WRITE_LIMIT || '10485760'),
+      appendFile: parseInt(process.env.MCP_SANDBOX_APPEND_LIMIT || '5242880'),
+      readFile: parseInt(process.env.MCP_SANDBOX_READ_LIMIT || '104857600')
+    }
   };
   
   // If user wants extra safety, they can set this env var
@@ -86,12 +127,24 @@ export async function validateConfig(config: SandboxConfig): Promise<void> {
     throw new Error('Sandbox root directory must be specified');
   }
   
-  if (config.quotaBytes <= 0) {
-    throw new Error('Quota must be positive');
+  // Skip quota-related validations when quota is disabled
+  if (!config.noQuota) {
+    if (config.quotaBytes <= 0) {
+      throw new Error('Quota must be positive');
+    }
+    
+    if (config.maxFileSizeBytes <= 0 || config.maxFileSizeBytes > config.quotaBytes) {
+      throw new Error('Max file size must be positive and less than quota');
+    }
   }
   
-  if (config.maxFileSizeBytes <= 0 || config.maxFileSizeBytes > config.quotaBytes) {
-    throw new Error('Max file size must be positive and less than quota');
+  // Validate new size limits
+  if (config.maxFileSize && config.maxFileSize <= 0) {
+    throw new Error('Max file size must be positive');
+  }
+  
+  if (config.maxContentLength && config.maxContentLength <= 0) {
+    throw new Error('Max content length must be positive');
   }
   
   // Validate extension lists
@@ -118,21 +171,23 @@ export async function validateConfig(config: SandboxConfig): Promise<void> {
     }
   }
 
-  // Check available disk space using check-disk-space
-  try {
-    const diskSpace = await checkDiskSpace(config.sandboxRoot);
-    
-    if (diskSpace.free < config.quotaBytes) {
-      throw new Error(
-        `Insufficient disk space. Required: ${(config.quotaBytes / 1024 / 1024).toFixed(2)} MB, ` +
-        `Available: ${(diskSpace.free / 1024 / 1024).toFixed(2)} MB`
-      );
+  // Check available disk space using check-disk-space (skip if quota disabled)
+  if (!config.noQuota) {
+    try {
+      const diskSpace = await checkDiskSpace(config.sandboxRoot);
+      
+      if (diskSpace.free < config.quotaBytes) {
+        throw new Error(
+          `Insufficient disk space. Required: ${(config.quotaBytes / 1024 / 1024).toFixed(2)} MB, ` +
+          `Available: ${(diskSpace.free / 1024 / 1024).toFixed(2)} MB`
+        );
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('Insufficient disk space')) {
+        throw error;
+      }
+      // Log but don't fail if we can't check disk space
+      console.warn(`Could not verify disk space: ${error}`);
     }
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('Insufficient disk space')) {
-      throw error;
-    }
-    // Log but don't fail if we can't check disk space
-    console.warn(`Could not verify disk space: ${error}`);
   }
 }

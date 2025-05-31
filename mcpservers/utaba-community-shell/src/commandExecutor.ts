@@ -4,10 +4,26 @@ import path from 'path';
 import { Config, CommandPattern } from './config.js';
 import { SecurityValidator, ValidationResult, SecurityError } from './security.js';
 import { Logger } from './logger.js';
+import { ApprovalManager, ApprovalError, ApprovalTimeoutError } from './approvals/index.js';
+import { 
+  createAsyncJobQueue, 
+  createAsyncJobProcessor,
+  AsyncJobQueue,
+  AsyncJobProcessor, 
+  JobRecord, 
+  JobSubmissionRequest, 
+  JobStatusResponse,
+  JobResultResponse,
+  JobSummary,
+  generateSessionId,
+  calculatePollingInterval,
+  loadJobResults
+} from './async/index.js';
 
 export interface CommandRequest {
   command: string;
   args: string[];
+  startDirectory: string; 
   workingDirectory?: string;
   environment?: Record<string, string>;
   timeout?: number;
@@ -27,6 +43,15 @@ export interface StreamingCommandResult extends CommandResult {
   isComplete: boolean;
 }
 
+// New interfaces for async operations
+export interface AsyncJobSubmission {
+  jobId: string;
+  status: string;
+  submittedAt: number;
+  estimatedApprovalTime?: number;
+  approvalUrl?: string;
+}
+
 export class CommandExecutionError extends Error {
   constructor(
     message: string,
@@ -39,13 +64,29 @@ export class CommandExecutionError extends Error {
   }
 }
 
+export class ApprovalRequiredError extends Error {
+  constructor(
+    message: string,
+    public readonly command: string,
+    public readonly args: string[],
+    public readonly workingDirectory: string
+  ) {
+    super(message);
+    this.name = 'ApprovalRequiredError';
+  }
+}
+
 /**
- * Command execution engine with security validation and process management
+ * Command execution engine with security validation, approval workflow, and process management
  */
 export class CommandExecutor extends EventEmitter {
   private securityValidator: SecurityValidator;
+  private approvalManager: ApprovalManager | null = null;
+  private asyncJobQueue: AsyncJobQueue | null = null;
+  private asyncJobProcessor: AsyncJobProcessor | null = null;
   private activeProcesses = new Map<string, ChildProcess>();
   private processCounter = 0;
+  private currentSessionId: string;
   
   constructor(
     private config: Config,
@@ -53,10 +94,390 @@ export class CommandExecutor extends EventEmitter {
   ) {
     super();
     this.securityValidator = new SecurityValidator(config);
+    this.currentSessionId = generateSessionId();
+    
+    // Initialize approval manager if any commands require confirmation
+    if (this.hasCommandsRequiringApproval()) {
+      this.approvalManager = new ApprovalManager(
+        this.config.approvalQueueBaseDir || process.cwd(), // Use current working directory for approval queue
+        logger,
+        // Enable bridge configuration for async job integration
+        {
+          enabled: true,
+          asyncQueueBaseDir: this.config.asyncQueueBaseDir,
+          approvalQueueBaseDir: this.config.approvalQueueBaseDir || process.cwd(),
+          monitoringInterval: 5000 // Check every 5 seconds
+        }
+      );
+    }
+
+    // Initialize async job queue
+    this.asyncJobQueue = createAsyncJobQueue({
+      baseDir: this.config.asyncQueueBaseDir // Will create async-queue subdirectory
+    }, logger);
+  }
+
+  /**
+   * Initialize the command executor (async initialization)
+   */
+  async initialize(): Promise<void> {
+    if (this.approvalManager) {
+      await this.approvalManager.initialize();
+      this.logger.info('CommandExecutor', 'Approval system initialized', 'initialize');
+    }
+
+    if (this.asyncJobQueue) {
+      await this.asyncJobQueue.initialize();
+      
+      // Create and start the processor - THIS IS THE MISSING PIECE!
+      this.asyncJobProcessor = createAsyncJobProcessor(
+        this.asyncJobQueue,
+        {
+          maxConcurrentJobs: this.config.maxConcurrentCommands || 3,
+          processingInterval: 5000, // Check every 5 seconds
+          shutdownTimeout: 30000    // 30 seconds for graceful shutdown
+        },
+        this.logger
+      );
+      
+      await this.asyncJobProcessor.start();
+      
+      this.logger.info('CommandExecutor', 'Async job system initialized', 'initialize', {
+        sessionId: this.currentSessionId,
+        baseDir: this.asyncJobQueue.getBaseDirectory(),
+        processorStarted: true
+      });
+    }
+  }
+
+  /**
+   * Submit command for async execution - returns immediately with job ID
+   */
+  async executeCommandAsync(request: CommandRequest, options: {
+    conversationId?: string;
+    userDescription?: string;
+  } = {}): Promise<AsyncJobSubmission> {
+    if (!this.asyncJobQueue) {
+      throw new Error('Async job queue not initialized');
+    }
+
+    // Validate trusted environment and command security
+    this.securityValidator.validateTrustedEnvironment();
+    
+    const validation = this.securityValidator.validateCommand(
+      request.command,
+      request.args,
+      request.workingDirectory || "",
+      request.startDirectory
+    );
+    
+    if (!validation.allowed) {
+      this.logger.warn('CommandExecutor', 'Async command submission blocked', 'executeCommandAsync', {
+        command: request.command,
+        args: request.args,
+        reason: validation.reason
+      });
+      throw new SecurityError(`Command execution denied: ${validation.reason}`, validation.reason || 'Unknown');
+    }
+
+    const pattern = validation.matchedPattern!;
+    const resolvedWorkingDirectory = this.securityValidator.resolveWorkingDirectory(
+      request.startDirectory, 
+      request.workingDirectory || ""
+    );
+
+    // Create job submission request with approval flag
+    const jobRequest: JobSubmissionRequest = {
+      command: request.command,
+      args: validation.sanitizedArgs || request.args,
+      workingDirectory: resolvedWorkingDirectory,
+      timeout: request.timeout || this.securityValidator.getCommandTimeout(pattern),
+      conversationId: options.conversationId,
+      sessionId: this.currentSessionId,
+      userDescription: options.userDescription,
+      requiresConfirmation: pattern.requiresConfirmation || false  // PASS THE FLAG!
+    };
+
+    try {
+      // Submit job to queue
+      const job = await this.asyncJobQueue.submitJob(jobRequest);
+
+      this.logger.info('CommandExecutor', 'Async command submitted', 'executeCommandAsync', {
+        jobId: job.id,
+        command: job.command,
+        operationType: job.operationType,
+        requiresApproval: pattern.requiresConfirmation,
+        resolvedStatus: job.status,  // Log what actually happened
+        estimatedDuration: job.estimatedDuration
+      });
+
+      // REMOVED: No need for approval system triggers if auto-approved
+      // The processor will pick up 'approved' jobs immediately
+      
+      // Calculate estimated approval time (only for pending approval)
+      const estimatedApprovalTime = job.status === 'pending_approval' ? 
+        job.submittedAt + (5 * 60 * 1000) : // 5 minutes for approval
+        undefined;
+
+      // Get approval URL only if needed
+      let approvalUrl: string | undefined;
+      if (job.status === 'pending_approval' && this.approvalManager) {
+        const serverStatus = this.approvalManager.getServerStatus();
+        approvalUrl = serverStatus.url;
+        
+        if (!serverStatus.isRunning) {
+          await this.approvalManager.launchApprovalCenter();
+          const updatedStatus = this.approvalManager.getServerStatus();
+          approvalUrl = updatedStatus.url;
+        }
+      }
+
+      return {
+        jobId: job.id,
+        status: job.status,  // Will be 'approved' for whitelisted commands
+        submittedAt: job.submittedAt,
+        estimatedApprovalTime,
+        approvalUrl
+      };
+
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('CommandExecutor', 'Failed to submit async command', 'executeCommandAsync', {
+        error: errorMsg,
+        command: request.command,
+        args: request.args
+      });
+      throw new Error(`Failed to submit async command: ${errorMsg}`);
+    }
+  }
+
+  /**
+   * Check status of async job
+   */
+  async checkJobStatus(jobId: string): Promise<JobStatusResponse | null> {
+    if (!this.asyncJobQueue) {
+      throw new Error('Async job queue not initialized');
+    }
+
+    try {
+      const job = await this.asyncJobQueue.getJob(jobId);
+      if (!job) {
+        return null;
+      }
+
+      const timeElapsed = Date.now() - job.submittedAt;
+      let estimatedTimeRemaining: number | undefined;
+
+      // Calculate estimated time remaining based on status
+      if (job.status === 'executing' && job.estimatedDuration) {
+        const executionElapsed = Date.now() - (job.startedAt || job.submittedAt);
+        const remaining = job.estimatedDuration - executionElapsed;
+        estimatedTimeRemaining = remaining > 0 ? remaining : undefined;
+      }
+
+      // Get approval URL if needed
+      let approvalUrl: string | undefined;
+      if (job.status === 'pending_approval' && this.approvalManager) {
+        const serverStatus = this.approvalManager.getServerStatus();
+        approvalUrl = serverStatus.url;
+      }
+
+      const response: JobStatusResponse = {
+        jobId: job.id,
+        status: job.status,
+        submittedAt: job.submittedAt,
+        lastUpdated: job.lastUpdated,
+        timeElapsed,
+        estimatedTimeRemaining,
+        progressMessage: job.progressMessage,
+        progressPercentage: job.progressPercentage,
+        executionToken: job.status === 'completed' ? job.executionToken : undefined,
+        error: job.error,
+        approvalUrl,
+        canCancel: ['pending_approval', 'approved', 'executing'].includes(job.status),
+        canRetry: job.canRetry && ['execution_failed', 'execution_timeout'].includes(job.status),
+        nextPollRecommendation: this.calculateNextPollInterval(job)
+      };
+
+      this.logger.debug('CommandExecutor', 'Job status checked', 'checkJobStatus', {
+        jobId,
+        status: job.status,
+        timeElapsed
+      });
+
+      return response;
+
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('CommandExecutor', 'Failed to check job status', 'checkJobStatus', {
+        error: errorMsg,
+        jobId
+      });
+      throw new Error(`Failed to check job status: ${errorMsg}`);
+    }
+  }
+
+  /**
+   * Get job result with secure token validation
+   */
+  async getJobResult(jobId: string, executionToken: string): Promise<JobResultResponse | null> {
+    if (!this.asyncJobQueue) {
+      throw new Error('Async job queue not initialized');
+    }
+
+    try {
+      const job = await this.asyncJobQueue.getJob(jobId);
+      if (!job) {
+        return null;
+      }
+
+      // Validate execution token
+      if (job.status !== 'completed' || !job.executionToken) {
+        throw new Error('Job is not completed or results are not available');
+      }
+
+      if (job.executionToken !== executionToken) {
+        this.logger.warn('CommandExecutor', 'Invalid execution token for job result', 'getJobResult', {
+          jobId,
+          providedToken: executionToken.substring(0, 8) + '...'
+        });
+        throw new Error('Invalid execution token');
+      }
+
+      // Load actual execution results from files
+      const results = await loadJobResults(this.asyncJobQueue.getBaseDirectory(), job);
+      
+      if (!results) {
+        this.logger.warn('CommandExecutor', 'Job results not found on disk', 'getJobResult', {
+          jobId
+        });
+        throw new Error('Job results not available');
+      }
+
+      const response: JobResultResponse = {
+        success: job.exitCode === 0,
+        exitCode: job.exitCode || null,
+        stdout: results.stdout,
+        stderr: results.stderr,
+        executionTime: job.executionTime || 0,
+        timedOut: job.timedOut || false,
+        killed: job.killed || false,
+        pid: job.pid,
+        completedAt: job.completedAt || Date.now()
+      };
+
+      this.logger.info('CommandExecutor', 'Job result retrieved', 'getJobResult', {
+        jobId,
+        success: response.success,
+        executionTime: response.executionTime,
+        stdoutSize: results.stdout.length,
+        stderrSize: results.stderr.length
+      });
+
+      return response;
+
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('CommandExecutor', 'Failed to get job result', 'getJobResult', {
+        error: errorMsg,
+        jobId
+      });
+      throw new Error(`Failed to get job result: ${errorMsg}`);
+    }
+  }
+
+  /**
+   * List recent jobs with optional filtering
+   */
+  async listJobs(options: {
+    limit?: number;
+    conversationId?: string;
+    status?: string;
+  } = {}): Promise<JobSummary[]> {
+    if (!this.asyncJobQueue) {
+      throw new Error('Async job queue not initialized');
+    }
+
+    try {
+      const jobs = await this.asyncJobQueue.listJobs({
+        limit: options.limit || 10,
+        conversationId: options.conversationId
+      });
+
+      this.logger.debug('CommandExecutor', 'Jobs listed', 'listJobs', {
+        count: jobs.length,
+        conversationId: options.conversationId
+      });
+
+      return jobs;
+
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('CommandExecutor', 'Failed to list jobs', 'listJobs', {
+        error: errorMsg,
+        options
+      });
+      throw new Error(`Failed to list jobs: ${errorMsg}`);
+    }
+  }
+
+  /**
+   * Check all jobs for current conversation
+   */
+  async checkConversationJobs(conversationId?: string): Promise<{
+    activeJobs: JobSummary[];
+    recentlyCompleted: JobSummary[];
+    pendingResults: JobSummary[];
+  }> {
+    if (!this.asyncJobQueue) {
+      throw new Error('Async job queue not initialized');
+    }
+
+    try {
+      const allJobs = await this.asyncJobQueue.listJobs({
+        conversationId: conversationId || this.currentSessionId,
+        limit: 50
+      });
+
+      const activeJobs = allJobs.filter(job => 
+        ['pending_approval', 'approved', 'executing'].includes(job.status)
+      );
+
+      const recentlyCompleted = allJobs.filter(job => {
+        if (job.status !== 'completed') return false;
+        const completedRecently = (Date.now() - job.lastUpdated) < (30 * 60 * 1000); // 30 minutes
+        return completedRecently;
+      });
+
+      const pendingResults = allJobs.filter(job => 
+        job.status === 'completed' && job.executionToken
+      );
+
+      this.logger.info('CommandExecutor', 'Conversation jobs checked', 'checkConversationJobs', {
+        conversationId: conversationId || this.currentSessionId,
+        activeCount: activeJobs.length,
+        recentlyCompletedCount: recentlyCompleted.length,
+        pendingResultsCount: pendingResults.length
+      });
+
+      return {
+        activeJobs,
+        recentlyCompleted,
+        pendingResults
+      };
+
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('CommandExecutor', 'Failed to check conversation jobs', 'checkConversationJobs', {
+        error: errorMsg,
+        conversationId
+      });
+      throw new Error(`Failed to check conversation jobs: ${errorMsg}`);
+    }
   }
   
   /**
-   * Execute a command with full validation and security checks
+   * Execute a command with full validation and security checks (SYNC - existing method)
    */
   async executeCommand(request: CommandRequest): Promise<CommandResult> {
     // Validate trusted environment
@@ -66,7 +487,8 @@ export class CommandExecutor extends EventEmitter {
     const validation = this.securityValidator.validateCommand(
       request.command,
       request.args,
-      request.workingDirectory
+      request.workingDirectory || "",
+      request.startDirectory
     );
     
     if (!validation.allowed) {
@@ -78,28 +500,36 @@ export class CommandExecutor extends EventEmitter {
       throw new SecurityError(`Command execution denied: ${validation.reason}`, validation.reason || 'Unknown');
     }
     
+    // Check if approval is required for this command
+    const pattern = validation.matchedPattern!;
+    if (pattern.requiresConfirmation && this.approvalManager) {
+      await this.handleApprovalWorkflow(request, pattern);
+    }
+    
     // Check concurrent execution limits
     if (this.activeProcesses.size >= this.config.maxConcurrentCommands) {
       throw new Error(`Maximum concurrent commands reached (${this.config.maxConcurrentCommands})`);
     }
     
-    const pattern = validation.matchedPattern!;
     const timeout = this.securityValidator.getCommandTimeout(pattern);
     const sanitizedArgs = validation.sanitizedArgs || request.args;
+    const resolvedWorkingDirectory = this.securityValidator.resolveWorkingDirectory(request.startDirectory, request.workingDirectory || "");
     
+    this.logger.debug('CommandExecutor', 'Resolved working directory is ' + resolvedWorkingDirectory, 'executeCommand');
     this.logger.info('CommandExecutor', 'Executing command', 'executeCommand', {
       command: request.command,
       args: sanitizedArgs,
       workingDirectory: request.workingDirectory,
       timeout,
-      pattern: pattern.description
+      pattern: pattern.description,
+      requiresApproval: pattern.requiresConfirmation
     });
     
     return this.spawnProcess(
       request.command,
       sanitizedArgs,
       {
-        cwd: request.workingDirectory,
+        cwd: resolvedWorkingDirectory,
         env: this.securityValidator.sanitizeEnvironment(request.environment),
         timeout: request.timeout || timeout
       }
@@ -107,7 +537,7 @@ export class CommandExecutor extends EventEmitter {
   }
   
   /**
-   * Execute a command with streaming output
+   * Execute a command with streaming output (SYNC - existing method)
    */
   executeCommandStreaming(
     request: CommandRequest,
@@ -121,18 +551,24 @@ export class CommandExecutor extends EventEmitter {
         const validation = this.securityValidator.validateCommand(
           request.command,
           request.args,
-          request.workingDirectory
+          request.workingDirectory || "",
+          request.startDirectory
         );
         
         if (!validation.allowed) {
           throw new SecurityError(`Command execution denied: ${validation.reason}`, validation.reason || 'Unknown');
         }
         
+        // Check if approval is required for this command
+        const pattern = validation.matchedPattern!;
+        if (pattern.requiresConfirmation && this.approvalManager) {
+          await this.handleApprovalWorkflow(request, pattern);
+        }
+        
         if (this.activeProcesses.size >= this.config.maxConcurrentCommands) {
           throw new Error(`Maximum concurrent commands reached (${this.config.maxConcurrentCommands})`);
         }
         
-        const pattern = validation.matchedPattern!;
         const timeout = this.securityValidator.getCommandTimeout(pattern);
         const sanitizedArgs = validation.sanitizedArgs || request.args;
         
@@ -140,14 +576,16 @@ export class CommandExecutor extends EventEmitter {
           command: request.command,
           args: sanitizedArgs,
           workingDirectory: request.workingDirectory,
-          timeout
+          timeout,
+          requiresApproval: pattern.requiresConfirmation
         });
         
+        let resolvedWorkingDirectory = this.securityValidator.resolveWorkingDirectory(request.startDirectory, request.workingDirectory || "");
         const result = await this.spawnProcessStreaming(
           request.command,
           sanitizedArgs,
           {
-            cwd: request.workingDirectory,
+            cwd: resolvedWorkingDirectory,
             env: this.securityValidator.sanitizeEnvironment(request.environment),
             timeout: request.timeout || timeout
           },
@@ -159,6 +597,165 @@ export class CommandExecutor extends EventEmitter {
         reject(error);
       }
     });
+  }
+
+  /**
+   * Get approval manager status (for debugging/monitoring)
+   */
+  getApprovalStatus(): { 
+    enabled: boolean; 
+    serverRunning?: boolean; 
+    serverUrl?: string;
+    pendingRequests?: number;
+    bridgeStatus?: any;
+  } {
+    if (!this.approvalManager) {
+      return { enabled: false };
+    }
+
+    const serverStatus = this.approvalManager.getServerStatus();
+    const bridgeStatus = this.approvalManager.getBridgeStatus();
+    
+    return {
+      enabled: true,
+      serverRunning: serverStatus.isRunning,
+      serverUrl: serverStatus.url,
+      bridgeStatus
+      // Note: pendingRequests would require async call, could be added if needed
+    };
+  }
+
+  /**
+   * Launch the approval center and return access information
+   */
+  async launchApprovalCenter(forceRestart: boolean = false): Promise<{
+    launched: boolean;
+    url?: string;
+    port?: number;
+    alreadyRunning: boolean;
+  }> {
+    // Check if approval system is available
+    if (!this.approvalManager) {
+      this.logger.info('CommandExecutor', 'Approval center not available - no commands require approval', 'launchApprovalCenter');
+      return {
+        launched: false,
+        alreadyRunning: false
+      };
+    }
+
+    try {
+      // Use the approval manager's launch method
+      const result = await this.approvalManager.launchApprovalCenter(forceRestart);
+      
+      this.logger.info('CommandExecutor', 'Approval center launch completed', 'launchApprovalCenter', {
+        launched: result.launched,
+        url: result.url,
+        port: result.port,
+        alreadyRunning: result.alreadyRunning,
+        forceRestart
+      });
+
+      return result;
+
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('CommandExecutor', 'Failed to launch approval center', 'launchApprovalCenter', {
+        error: errorMsg,
+        forceRestart
+      });
+      
+      throw new Error(`Failed to launch approval center: ${errorMsg}`);
+    }
+  }
+
+  // Private methods
+
+  private hasCommandsRequiringApproval(): boolean {
+    return this.config.allowedCommands.some(cmd => cmd.requiresConfirmation === true);
+  }
+
+  private calculateNextPollInterval(job: JobRecord): number {
+    // Use the imported utility function from async module
+    return calculatePollingInterval(job);
+  }
+
+  private async handleApprovalWorkflow(request: CommandRequest, pattern: CommandPattern): Promise<void> {
+    if (!this.approvalManager) {
+      throw new Error('Approval manager not initialized but approval required');
+    }
+
+    try {
+      const resolvedWorkingDirectory = this.securityValidator.resolveWorkingDirectory(
+        request.startDirectory, 
+        request.workingDirectory || ""
+      );
+
+      this.logger.info('CommandExecutor', 'Requesting approval for command', 'handleApprovalWorkflow', {
+        command: request.command,
+        args: request.args,
+        workingDirectory: resolvedWorkingDirectory
+      });
+
+      // Request approval and wait for decision
+      const decision = await this.approvalManager.requestApproval(
+        request.command,
+        request.args,
+        resolvedWorkingDirectory,
+        request.timeout || 300000 // 5 minute default timeout
+      );
+
+      if (decision.decision === 'reject') {
+        this.logger.warn('CommandExecutor', 'Command execution rejected by user', 'handleApprovalWorkflow', {
+          command: request.command,
+          args: request.args,
+          decidedBy: decision.decidedBy,
+          reason: decision.reason
+        });
+        
+        throw new SecurityError(
+          `Command execution rejected by ${decision.decidedBy}${decision.reason ? ': ' + decision.reason : ''}`,
+          'USER_REJECTED'
+        );
+      }
+
+      this.logger.info('CommandExecutor', 'Command execution approved by user', 'handleApprovalWorkflow', {
+        command: request.command,
+        args: request.args,
+        decidedBy: decision.decidedBy,
+        decisionTime: Date.now() - decision.timestamp
+      });
+
+    } catch (error) {
+      if (error instanceof ApprovalTimeoutError) {
+        this.logger.warn('CommandExecutor', 'Approval request timed out', 'handleApprovalWorkflow', {
+          command: request.command,
+          args: request.args,
+          timeout: error.message
+        });
+        
+        throw new SecurityError(
+          `Command execution approval timed out. No response received within the timeout period.`,
+          'APPROVAL_TIMEOUT'
+        );
+      }
+
+      if (error instanceof ApprovalError) {
+        this.logger.error('CommandExecutor', 'Approval system error', 'handleApprovalWorkflow', {
+          command: request.command,
+          args: request.args,
+          error: error.message,
+          code: error.code
+        });
+        
+        throw new SecurityError(
+          `Approval system error: ${error.message}`,
+          'APPROVAL_SYSTEM_ERROR'
+        );
+      }
+
+      // Re-throw security errors and other errors as-is
+      throw error;
+    }
   }
   
   /**
@@ -471,11 +1068,13 @@ export class CommandExecutor extends EventEmitter {
     activeProcesses: number;
     maxConcurrent: number;
     totalExecuted: number;
+    approvalSystemEnabled: boolean;
   } {
     return {
       activeProcesses: this.activeProcesses.size,
       maxConcurrent: this.config.maxConcurrentCommands,
-      totalExecuted: this.processCounter
+      totalExecuted: this.processCounter,
+      approvalSystemEnabled: this.approvalManager !== null
     };
   }
   
@@ -487,6 +1086,43 @@ export class CommandExecutor extends EventEmitter {
       activeProcesses: this.activeProcesses.size,
       graceful
     });
+    
+    // Shutdown async job processor FIRST
+    if (this.asyncJobProcessor) {
+      try {
+        await this.asyncJobProcessor.stop();
+        this.asyncJobProcessor = null;
+        this.logger.info('CommandExecutor', 'Async job processor stopped', 'shutdown');
+      } catch (error) {
+        this.logger.error('CommandExecutor', 'Error stopping async job processor', 'shutdown', {
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+    }
+    
+    // Shutdown async job queue
+    if (this.asyncJobQueue) {
+      try {
+        await this.asyncJobQueue.shutdown();
+        this.asyncJobQueue = null;
+      } catch (error) {
+        this.logger.error('CommandExecutor', 'Error shutting down async job queue', 'shutdown', {
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+    }
+    
+    // Shutdown approval manager
+    if (this.approvalManager) {
+      try {
+        await this.approvalManager.shutdown();
+        this.approvalManager = null;
+      } catch (error) {
+        this.logger.error('CommandExecutor', 'Error shutting down approval manager', 'shutdown', {
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+    }
     
     if (graceful) {
       // First try graceful termination
