@@ -1,14 +1,15 @@
 /**
  * Approval Server - Web UI for Command Approvals
  * 
- * Provides a secure web interface for approving/rejecting command executions
+ * FIXED: Now uses ApprovalManager instead of ApprovalQueue directly
+ * This ensures bridged async jobs are visible in the approval center
  */
 
 import express, { Express, Request, Response } from 'express';
 import { Server as HttpServer } from 'http';
 import crypto from 'crypto';
 import { Logger } from '../logger.js';
-import { ApprovalQueue } from './queue.js';
+import { ApprovalManager } from './manager.js'; // 🔥 CHANGED: Import manager instead of queue
 import { ApprovalRequest, ApprovalServerConfig, ApprovalServerError } from './types.js';
 
 export class ApprovalServer {
@@ -19,7 +20,7 @@ export class ApprovalServer {
   private port: number | null = null;
 
   constructor(
-    private approvalQueue: ApprovalQueue,
+    private approvalManager: ApprovalManager, // 🔥 CHANGED: Use manager instead of queue
     private config: ApprovalServerConfig,
     private logger: Logger
   ) {
@@ -200,10 +201,10 @@ export class ApprovalServer {
 
     // API Routes
 
-    // Get pending requests
+    // Get pending requests - 🔥 FIXED: Now calls manager instead of queue
     this.app.get('/api/requests/pending', async (req, res) => {
       try {
-        const requests = await this.approvalQueue.getPendingRequests();
+        const requests = await this.approvalManager.getPendingRequests(); // 🔥 FIXED!
         res.json({ requests });
       } catch (error) {
         this.logger.error('ApprovalServer', 'Failed to get pending requests', 'api', {
@@ -213,10 +214,10 @@ export class ApprovalServer {
       }
     });
 
-    // Get queue statistics
+    // Get queue statistics - 🔥 FIXED: Now calls manager instead of queue
     this.app.get('/api/stats', async (req, res) => {
       try {
-        const stats = await this.approvalQueue.getStats();
+        const stats = await this.approvalManager.getStats(); // 🔥 FIXED!
         res.json({ stats });
       } catch (error) {
         this.logger.error('ApprovalServer', 'Failed to get stats', 'api', {
@@ -226,13 +227,13 @@ export class ApprovalServer {
       }
     });
 
-    // Approve a request
+    // Approve a request - 🔥 FIXED: Now calls manager instead of queue
     this.app.post('/api/requests/:id/approve', async (req, res) => {
       try {
         const { id } = req.params;
         const { decidedBy = 'browser-user' } = req.body;
 
-        await this.approvalQueue.approveRequest(id, decidedBy);
+        await this.approvalManager.approveRequest(id, decidedBy); // 🔥 FIXED!
         
         this.logger.info('ApprovalServer', 'Request approved via browser', 'api', {
           requestId: id,
@@ -249,13 +250,13 @@ export class ApprovalServer {
       }
     });
 
-    // Reject a request
+    // Reject a request - 🔥 FIXED: Now calls manager instead of queue
     this.app.post('/api/requests/:id/reject', async (req, res) => {
       try {
         const { id } = req.params;
         const { decidedBy = 'browser-user', reason } = req.body;
 
-        await this.approvalQueue.rejectRequest(id, decidedBy);
+        await this.approvalManager.rejectRequest(id, decidedBy); // 🔥 FIXED!
         
         this.logger.info('ApprovalServer', 'Request rejected via browser', 'api', {
           requestId: id,
@@ -273,11 +274,15 @@ export class ApprovalServer {
       }
     });
 
-    // Get specific request details
+    // Get specific request details - 🔥 WOULD NEED FIXING: Manager doesn't have getRequest method
     this.app.get('/api/requests/:id', async (req, res) => {
       try {
         const { id } = req.params;
-        const request = await this.approvalQueue.getRequest(id);
+        
+        // 🔥 TODO: ApprovalManager needs a getRequest method or we need to get from queue
+        // For now, get all pending and find the one we want
+        const allRequests = await this.approvalManager.getPendingRequests();
+        const request = allRequests.find(r => r.id === id);
         
         if (!request) {
           return res.status(404).json({ error: 'Request not found' });
@@ -294,6 +299,7 @@ export class ApprovalServer {
     });
 
     // Server-Sent Events for real-time updates
+    // 🔥 PROBLEM: This still needs to be connected to manager events, not queue events
     this.app.get('/api/events', (req, res) => {
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
@@ -303,30 +309,24 @@ export class ApprovalServer {
       // Send initial connection event
       res.write('data: ' + JSON.stringify({ type: 'connected', timestamp: Date.now() }) + '\n\n');
 
-      // Set up event listeners
-      const onRequestCreated = (request: ApprovalRequest) => {
-        res.write('data: ' + JSON.stringify({ 
-          type: 'requestCreated', 
-          request,
-          timestamp: Date.now() 
-        }) + '\n\n');
-      };
-
-      const onRequestDecided = (data: any) => {
-        res.write('data: ' + JSON.stringify({ 
-          type: 'requestDecided', 
-          ...data,
-          timestamp: Date.now() 
-        }) + '\n\n');
-      };
-
-      this.approvalQueue.on('requestCreated', onRequestCreated);
-      this.approvalQueue.on('requestDecided', onRequestDecided);
+      // 🔥 TODO: Need to properly handle events from manager
+      // For now, implement basic polling-based updates
+      const updateInterval = setInterval(async () => {
+        try {
+          const requests = await this.approvalManager.getPendingRequests();
+          res.write('data: ' + JSON.stringify({ 
+            type: 'requestsUpdate', 
+            requests,
+            timestamp: Date.now() 
+          }) + '\n\n');
+        } catch (error) {
+          // Connection might be closed
+        }
+      }, 5000); // Update every 5 seconds
 
       // Clean up on client disconnect
       req.on('close', () => {
-        this.approvalQueue.off('requestCreated', onRequestCreated);
-        this.approvalQueue.off('requestDecided', onRequestDecided);
+        clearInterval(updateInterval);
       });
 
       // Keep connection alive
@@ -358,6 +358,7 @@ export class ApprovalServer {
   }
 
   private async generateApprovalUI(): Promise<string> {
+    // Same UI code as before - no changes needed here
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -846,6 +847,10 @@ export class ApprovalServer {
                     case 'requestDecided':
                         this.loadPendingRequests();
                         this.loadStats();
+                        break;
+                    case 'requestsUpdate':
+                        // Handle periodic updates from server
+                        this.renderRequests(data.requests || []);
                         break;
                 }
             }

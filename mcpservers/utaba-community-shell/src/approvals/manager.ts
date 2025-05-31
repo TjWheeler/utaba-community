@@ -1,7 +1,7 @@
 import path from 'path';
 import crypto from 'crypto';
 import { ApprovalQueue } from './queue.js';
-import { ApprovalServer } from './server.js';
+import { ApprovalServer } from './server.js'; // This should work now
 import { ApprovalBridge, ApprovalBridgeConfig, DEFAULT_APPROVAL_BRIDGE_CONFIG, BridgedJob } from './bridge.js';
 import {
   ApprovalRequest,
@@ -410,8 +410,8 @@ export class ApprovalManager {
         riskThreshold: 8
       };
 
-      // Create and start server
-      this.server = new ApprovalServer(this.queue, serverConfig, this.logger);
+      // 🔥 CRITICAL FIX: Pass manager (this) instead of queue to server
+      this.server = new ApprovalServer(this, serverConfig, this.logger);
       const { port, authToken, url } = await this.server.start();
 
       this.logger.info('ApprovalManager', 'Approval server started', 'ensureServerRunning', {
