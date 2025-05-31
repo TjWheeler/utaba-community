@@ -454,7 +454,6 @@ export class ApprovalServer {
   }
 
   private async generateApprovalUI(): Promise<string> {
-    // Enhanced UI with AGGRESSIVE polling fix
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -814,7 +813,6 @@ export class ApprovalServer {
         class ApprovalUI {
             constructor() {
                 this.eventSource = null;
-                this.pollingInterval = null;
                 this.isSSEConnected = false;
                 this.lastDataHash = null;
                 this.pollCount = 0;
@@ -990,13 +988,13 @@ export class ApprovalServer {
                     
                     this.eventSource.onopen = () => {
                         this.isSSEConnected = true;
-                        this.updateStatus('connected', '🟢 SSE Connected');
+                        this.updateStatus('connected', '🟢 Connected');
                         console.log('SSE connection established');
                     };
                     
                     this.eventSource.onerror = () => {
                         this.isSSEConnected = false;
-                        this.updateStatus('disconnected', '🔴 SSE Disconnected');
+                        this.updateStatus('disconnected', '🔴 Disconnected');
                         console.log('SSE connection error');
                     };
                     
