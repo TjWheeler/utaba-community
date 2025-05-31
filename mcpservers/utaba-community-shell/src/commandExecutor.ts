@@ -984,24 +984,49 @@ export class CommandExecutor extends EventEmitter {
   }
   
   /**
-   * Kill a running process
+   * Kill a running process - accepts both internal process ID and actual PID
    */
-  killProcess(processId: string, signal: NodeJS.Signals = 'SIGTERM'): boolean {
-    const process = this.activeProcesses.get(processId);
+  killProcess(identifier: string, signal: NodeJS.Signals = 'SIGTERM'): boolean {
+    // Try as internal process ID first
+    let process = this.activeProcesses.get(identifier);
+    let processId = identifier;
+    
+    // If not found, try to find by PID
     if (!process) {
+      const pid = parseInt(identifier, 10);
+      if (!isNaN(pid)) {
+        for (const [id, proc] of this.activeProcesses) {
+          if (proc.pid === pid) {
+            process = proc;
+            processId = id; // Use internal ID for cleanup
+            break;
+          }
+        }
+      }
+    }
+    
+    if (!process) {
+      this.logger.warn('CommandExecutor', 'Process not found for kill', 'killProcess', {
+        identifier,
+        isNumeric: !isNaN(parseInt(identifier, 10)),
+        activeProcessCount: this.activeProcesses.size
+      });
       return false;
     }
     
     try {
       process.kill(signal);
       this.logger.info('CommandExecutor', 'Process killed', 'killProcess', {
+        identifier,
         processId,
         pid: process.pid,
-        signal
+        signal,
+        lookupMethod: identifier === processId ? 'internal_id' : 'pid'
       });
       return true;
     } catch (error) {
       this.logger.error('CommandExecutor', 'Failed to kill process', 'killProcess', {
+        identifier,
         processId,
         pid: process.pid,
         signal,
