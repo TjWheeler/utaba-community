@@ -31,6 +31,7 @@ export interface BridgedJob {
   operationType?: string;
   estimatedDuration?: number;
   riskScore?: number;
+  status: 'pending_approval' | 'approved' | 'rejected';
 }
 
 /**
@@ -136,6 +137,13 @@ export class ApprovalBridge extends EventEmitter {
   }
 
   /**
+   * Get all bridged jobs (for stats aggregation)
+   */
+  getAllBridgedJobs(): BridgedJob[] {
+    return Array.from(this.bridgedJobs.values());
+  }
+
+  /**
    * Remove completed bridge (cleanup)
    */
   removeBridgedJob(asyncJobId: string): boolean {
@@ -228,7 +236,8 @@ export class ApprovalBridge extends EventEmitter {
         timestamp: job.submittedAt,
         operationType: job.operationType,
         estimatedDuration: job.estimatedDuration,
-        riskScore
+        riskScore,
+        status: 'pending_approval'
       };
 
       this.bridgedJobs.set(job.id, bridgedJob);
@@ -293,6 +302,8 @@ export class ApprovalBridge extends EventEmitter {
           approvedAt: Date.now(),
           approvalRequestId
         });
+        // Update bridge status
+        bridgedJob.status = 'approved';
       } else {
         await this.updateAsyncJobStatus(bridgedJob.asyncJobId, 'rejected', {
           rejectedBy: decidedBy,
@@ -300,10 +311,14 @@ export class ApprovalBridge extends EventEmitter {
           rejectionReason: reason,
           approvalRequestId
         });
+        // Update bridge status
+        bridgedJob.status = 'rejected';
       }
 
-      // Clean up bridge
-      this.removeBridgedJob(bridgedJob.asyncJobId);
+      // Clean up bridge after a delay to allow stats to be read
+      setTimeout(() => {
+        this.removeBridgedJob(bridgedJob!.asyncJobId);
+      }, 10000); // Keep for 10 seconds for stats
 
       this.emit('approvalProcessed', {
         asyncJobId: bridgedJob.asyncJobId,

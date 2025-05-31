@@ -207,20 +207,80 @@ export class ApprovalManager {
   }
 
   /**
-   * Get approval queue statistics
+   * Get approval queue statistics (FIXED: Now combines traditional + bridged counts)
    */
   async getStats() {
     if (!this.isInitialized) {
       throw new ApprovalError('Approval system not initialized', 'NOT_INITIALIZED');
     }
 
-    const queueStats = await this.queue.getStats();
-    const bridgeStatus = this.bridge?.getStatus();
+    try {
+      // Get traditional queue stats
+      const queueStats = await this.queue.getStats();
+      const bridgeStatus = this.bridge?.getStatus();
 
-    return {
-      ...queueStats,
-      bridge: bridgeStatus || { isRunning: false, bridgedJobCount: 0 }
-    };
+      // Count bridged async jobs by status
+      let bridgedPending = 0;
+      let bridgedApproved = 0;
+      let bridgedRejected = 0;
+      let bridgedTotal = 0;
+
+      if (this.bridge) {
+        const allBridgedJobs = this.bridge.getAllBridgedJobs();
+        bridgedTotal = allBridgedJobs.length;
+        
+        for (const job of allBridgedJobs) {
+          switch (job.status) {
+            case 'pending_approval':
+              bridgedPending++;
+              break;
+            case 'approved':
+              bridgedApproved++;
+              break;
+            case 'rejected':
+              bridgedRejected++;
+              break;
+          }
+        }
+      }
+
+      // Combine stats from both sources
+      const combinedStats = {
+        pending: queueStats.pending + bridgedPending,
+        approved: queueStats.approved + bridgedApproved,
+        rejected: queueStats.rejected + bridgedRejected,
+        total: queueStats.total + bridgedTotal,
+        bridge: bridgeStatus || { isRunning: false, bridgedJobCount: 0 },
+        // Include breakdown for debugging
+        breakdown: {
+          queue: {
+            pending: queueStats.pending,
+            approved: queueStats.approved,
+            rejected: queueStats.rejected,
+            total: queueStats.total
+          },
+          bridge: {
+            pending: bridgedPending,
+            approved: bridgedApproved,
+            rejected: bridgedRejected,
+            total: bridgedTotal
+          }
+        }
+      };
+
+      this.logger.debug('ApprovalManager', 'Retrieved combined stats', 'getStats', {
+        combinedStats
+      });
+
+      return combinedStats;
+
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('ApprovalManager', 'Failed to get stats', 'getStats', {
+        error: errorMsg
+      });
+      throw new ApprovalError(`Failed to get stats: ${errorMsg}`, 'STATS_ERROR');
+    }
   }
 
   /**

@@ -7,14 +7,17 @@ import { Logger } from './logger.js';
 import { ApprovalManager, ApprovalError, ApprovalTimeoutError } from './approvals/index.js';
 import { 
   createAsyncJobQueue, 
-  AsyncJobQueue, 
+  createAsyncJobProcessor,
+  AsyncJobQueue,
+  AsyncJobProcessor, 
   JobRecord, 
   JobSubmissionRequest, 
   JobStatusResponse,
   JobResultResponse,
   JobSummary,
   generateSessionId,
-  calculatePollingInterval 
+  calculatePollingInterval,
+  loadJobResults
 } from './async/index.js';
 
 export interface CommandRequest {
@@ -80,6 +83,7 @@ export class CommandExecutor extends EventEmitter {
   private securityValidator: SecurityValidator;
   private approvalManager: ApprovalManager | null = null;
   private asyncJobQueue: AsyncJobQueue | null = null;
+  private asyncJobProcessor: AsyncJobProcessor | null = null;
   private activeProcesses = new Map<string, ChildProcess>();
   private processCounter = 0;
   private currentSessionId: string;
@@ -124,9 +128,24 @@ export class CommandExecutor extends EventEmitter {
 
     if (this.asyncJobQueue) {
       await this.asyncJobQueue.initialize();
-      this.logger.info('CommandExecutor', 'Async job queue initialized', 'initialize', {
+      
+      // Create and start the processor - THIS IS THE MISSING PIECE!
+      this.asyncJobProcessor = createAsyncJobProcessor(
+        this.asyncJobQueue,
+        {
+          maxConcurrentJobs: this.config.maxConcurrentCommands || 3,
+          processingInterval: 5000, // Check every 5 seconds
+          shutdownTimeout: 30000    // 30 seconds for graceful shutdown
+        },
+        this.logger
+      );
+      
+      await this.asyncJobProcessor.start();
+      
+      this.logger.info('CommandExecutor', 'Async job system initialized', 'initialize', {
         sessionId: this.currentSessionId,
-        baseDir: this.asyncJobQueue.getBaseDirectory()
+        baseDir: this.asyncJobQueue.getBaseDirectory(),
+        processorStarted: true
       });
     }
   }
@@ -321,13 +340,21 @@ export class CommandExecutor extends EventEmitter {
         throw new Error('Invalid execution token');
       }
 
-      // TODO: Read actual execution results from files
-      // For now, return placeholder data
+      // Load actual execution results from files
+      const results = await loadJobResults(this.asyncJobQueue.getBaseDirectory(), job);
+      
+      if (!results) {
+        this.logger.warn('CommandExecutor', 'Job results not found on disk', 'getJobResult', {
+          jobId
+        });
+        throw new Error('Job results not available');
+      }
+
       const response: JobResultResponse = {
         success: job.exitCode === 0,
         exitCode: job.exitCode || null,
-        stdout: "Command execution results would be here", // TODO: Load from file
-        stderr: "", // TODO: Load from file
+        stdout: results.stdout,
+        stderr: results.stderr,
         executionTime: job.executionTime || 0,
         timedOut: job.timedOut || false,
         killed: job.killed || false,
@@ -338,7 +365,9 @@ export class CommandExecutor extends EventEmitter {
       this.logger.info('CommandExecutor', 'Job result retrieved', 'getJobResult', {
         jobId,
         success: response.success,
-        executionTime: response.executionTime
+        executionTime: response.executionTime,
+        stdoutSize: results.stdout.length,
+        stderrSize: results.stderr.length
       });
 
       return response;
@@ -1053,6 +1082,19 @@ export class CommandExecutor extends EventEmitter {
       activeProcesses: this.activeProcesses.size,
       graceful
     });
+    
+    // Shutdown async job processor FIRST
+    if (this.asyncJobProcessor) {
+      try {
+        await this.asyncJobProcessor.stop();
+        this.asyncJobProcessor = null;
+        this.logger.info('CommandExecutor', 'Async job processor stopped', 'shutdown');
+      } catch (error) {
+        this.logger.error('CommandExecutor', 'Error stopping async job processor', 'shutdown', {
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+    }
     
     // Shutdown async job queue
     if (this.asyncJobQueue) {
