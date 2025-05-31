@@ -293,6 +293,31 @@ export interface SystemHealth {
   recommendations: string[];
 }
 
+/**
+ * Background Processor Configuration
+ */
+export interface ProcessorConfig {
+  maxConcurrentJobs: number;      // Max simultaneous executions
+  processingInterval: number;     // How often to check for jobs (ms)
+  shutdownTimeout: number;        // Graceful shutdown timeout (ms)
+  progressUpdateInterval: number; // How often to update progress (ms)
+  resultFileThreshold: number;    // Output size requiring file storage (bytes)
+}
+
+/**
+ * Job Result Data - Internal execution tracking
+ */
+export interface JobResultData {
+  stdout: string;
+  stderr: string;
+  startTime: number;
+  endTime: number;
+  exitCode: number | null;
+  timedOut: boolean;
+  killed: boolean;
+  pid?: number;
+}
+
 // Type Guards for runtime validation
 export function isJobStatus(value: string): value is JobStatus {
   const validStatuses: JobStatus[] = [
@@ -322,6 +347,14 @@ export type JobUpdate = Partial<Pick<JobRecord,
   | "error"
   | "errorCode"
   | "nextPollingInterval"
+  | "startedAt"
+  | "completedAt"
+  | "exitCode"
+  | "executionTime"
+  | "timedOut"
+  | "killed"
+  | "pid"
+  | "executionToken"
 >>;
 
 // Constants for configuration
@@ -348,3 +381,11 @@ export const MAX_OUTPUT_SIZE = {
   inline: 10 * 1024,               // 10KB inline in job record
   file: 100 * 1024 * 1024          // 100MB in separate files
 } as const;
+
+export const DEFAULT_PROCESSOR_CONFIG: ProcessorConfig = {
+  maxConcurrentJobs: 5,
+  processingInterval: 5000,        // 5 seconds
+  shutdownTimeout: 30000,          // 30 seconds
+  progressUpdateInterval: 10000,   // 10 seconds
+  resultFileThreshold: 10 * 1024   // 10KB
+};

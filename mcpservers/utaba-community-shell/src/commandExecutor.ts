@@ -13,7 +13,8 @@ import {
   JobStatusResponse,
   JobResultResponse,
   JobSummary,
-  generateSessionId 
+  generateSessionId,
+  calculatePollingInterval 
 } from './async/index.js';
 
 export interface CommandRequest {
@@ -95,7 +96,14 @@ export class CommandExecutor extends EventEmitter {
     if (this.hasCommandsRequiringApproval()) {
       this.approvalManager = new ApprovalManager(
         process.cwd(), // Use current working directory for approval queue
-        logger
+        logger,
+        // Enable bridge configuration for async job integration
+        {
+          enabled: true,
+          asyncQueueBaseDir: process.cwd(),
+          approvalQueueBaseDir: process.cwd(),
+          monitoringInterval: 5000 // Check every 5 seconds
+        }
       );
     }
 
@@ -566,17 +574,20 @@ export class CommandExecutor extends EventEmitter {
     serverRunning?: boolean; 
     serverUrl?: string;
     pendingRequests?: number;
+    bridgeStatus?: any;
   } {
     if (!this.approvalManager) {
       return { enabled: false };
     }
 
     const serverStatus = this.approvalManager.getServerStatus();
+    const bridgeStatus = this.approvalManager.getBridgeStatus();
     
     return {
       enabled: true,
       serverRunning: serverStatus.isRunning,
       serverUrl: serverStatus.url,
+      bridgeStatus
       // Note: pendingRequests would require async call, could be added if needed
     };
   }
@@ -631,8 +642,7 @@ export class CommandExecutor extends EventEmitter {
   }
 
   private calculateNextPollInterval(job: JobRecord): number {
-    // Use the utility function from async module
-    const { calculatePollingInterval } = require('./async/utils.js');
+    // Use the imported utility function from async module
     return calculatePollingInterval(job);
   }
 

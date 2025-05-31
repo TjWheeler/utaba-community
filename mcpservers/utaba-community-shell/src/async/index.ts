@@ -13,8 +13,13 @@ export * from './utils.js';
 // Main queue implementation
 export { AsyncJobQueue, type AsyncJobQueueConfig } from './queue.js';
 
+// Background processor
+export { AsyncJobProcessor, loadJobResults } from './processor.js';
+
 // Convenience factory function for creating queue with default configuration
 import { AsyncJobQueue, AsyncJobQueueConfig } from './queue.js';
+import { AsyncJobProcessor } from './processor.js';
+import { ProcessorConfig, DEFAULT_PROCESSOR_CONFIG } from './types.js';
 import { Logger } from '../logger.js';
 
 /**
@@ -37,6 +42,22 @@ export function createAsyncJobQueue(
   };
 
   return new AsyncJobQueue(envConfig, logger);
+}
+
+/**
+ * Create a new AsyncJobProcessor instance with sensible defaults
+ */
+export function createAsyncJobProcessor(
+  queue: AsyncJobQueue,
+  config: Partial<ProcessorConfig> = {},
+  logger: Logger
+): AsyncJobProcessor {
+  const processorConfig: ProcessorConfig = {
+    ...DEFAULT_PROCESSOR_CONFIG,
+    ...config
+  };
+
+  return new AsyncJobProcessor(queue, processorConfig, logger);
 }
 
 /**
