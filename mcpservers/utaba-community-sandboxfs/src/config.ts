@@ -39,6 +39,9 @@ export interface SandboxConfig {
     appendFile?: number;
     readFile?: number;
   };
+
+  // NEW: Disable quota system entirely
+  noQuota: boolean;
 }
 
 // Default limits for operations
@@ -62,6 +65,7 @@ export const DEFAULT_CONFIG: SandboxConfig = {
   allowBinary: true,
   blockedExtensions: [],
   allowedExtensions: [],
+  noQuota: false, // Quota enabled by default for safety
   // Apply default limits
   maxFileSize: DEFAULT_LIMITS.maxFileSize,
   maxContentLength: DEFAULT_LIMITS.maxContentLength,
@@ -88,6 +92,7 @@ export function loadConfig(): SandboxConfig {
     allowDelete: process.env.MCP_SANDBOX_ALLOW_DELETE !== 'false',
     allowDirectoryOps: process.env.MCP_SANDBOX_ALLOW_DIRECTORY_OPS !== 'false',
     allowBinary: process.env.MCP_SANDBOX_ALLOW_BINARY !== 'false',
+    noQuota: process.env.MCP_SANDBOX_NOQUOTA === 'true', // Explicit opt-in only
     blockedExtensions: process.env.MCP_SANDBOX_BLOCKED_EXTENSIONS
       ? process.env.MCP_SANDBOX_BLOCKED_EXTENSIONS.split(',').map(ext => ext.trim().toLowerCase())
       : DEFAULT_CONFIG.blockedExtensions,
@@ -122,12 +127,15 @@ export async function validateConfig(config: SandboxConfig): Promise<void> {
     throw new Error('Sandbox root directory must be specified');
   }
   
-  if (config.quotaBytes <= 0) {
-    throw new Error('Quota must be positive');
-  }
-  
-  if (config.maxFileSizeBytes <= 0 || config.maxFileSizeBytes > config.quotaBytes) {
-    throw new Error('Max file size must be positive and less than quota');
+  // Skip quota-related validations when quota is disabled
+  if (!config.noQuota) {
+    if (config.quotaBytes <= 0) {
+      throw new Error('Quota must be positive');
+    }
+    
+    if (config.maxFileSizeBytes <= 0 || config.maxFileSizeBytes > config.quotaBytes) {
+      throw new Error('Max file size must be positive and less than quota');
+    }
   }
   
   // Validate new size limits
@@ -163,21 +171,23 @@ export async function validateConfig(config: SandboxConfig): Promise<void> {
     }
   }
 
-  // Check available disk space using check-disk-space
-  try {
-    const diskSpace = await checkDiskSpace(config.sandboxRoot);
-    
-    if (diskSpace.free < config.quotaBytes) {
-      throw new Error(
-        `Insufficient disk space. Required: ${(config.quotaBytes / 1024 / 1024).toFixed(2)} MB, ` +
-        `Available: ${(diskSpace.free / 1024 / 1024).toFixed(2)} MB`
-      );
+  // Check available disk space using check-disk-space (skip if quota disabled)
+  if (!config.noQuota) {
+    try {
+      const diskSpace = await checkDiskSpace(config.sandboxRoot);
+      
+      if (diskSpace.free < config.quotaBytes) {
+        throw new Error(
+          `Insufficient disk space. Required: ${(config.quotaBytes / 1024 / 1024).toFixed(2)} MB, ` +
+          `Available: ${(diskSpace.free / 1024 / 1024).toFixed(2)} MB`
+        );
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('Insufficient disk space')) {
+        throw error;
+      }
+      // Log but don't fail if we can't check disk space
+      console.warn(`Could not verify disk space: ${error}`);
     }
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('Insufficient disk space')) {
-      throw error;
-    }
-    // Log but don't fail if we can't check disk space
-    console.warn(`Could not verify disk space: ${error}`);
   }
 }
