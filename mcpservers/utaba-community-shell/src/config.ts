@@ -142,7 +142,7 @@ export const DEFAULT_CONFIGS = {
       },
       {
         command: 'git',
-        allowedArgs: ['status', 'diff', 'log', 'branch', 'add', 'commit', 'push', 'pull'],
+        allowedArgs: ['status', 'diff', 'log', 'branch', 'add', 'commit', 'push', 'pull', '-F'],
         description: 'Git version control',
         timeout: 30000,
         workingDirRestriction: 'project-only' as const

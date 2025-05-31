@@ -4,6 +4,7 @@ import path from 'path';
 import { Config, CommandPattern } from './config.js';
 import { SecurityValidator, ValidationResult, SecurityError } from './security.js';
 import { Logger } from './logger.js';
+import { ApprovalManager, ApprovalError, ApprovalTimeoutError } from './approvals/index.js';
 
 export interface CommandRequest {
   command: string;
@@ -40,11 +41,24 @@ export class CommandExecutionError extends Error {
   }
 }
 
+export class ApprovalRequiredError extends Error {
+  constructor(
+    message: string,
+    public readonly command: string,
+    public readonly args: string[],
+    public readonly workingDirectory: string
+  ) {
+    super(message);
+    this.name = 'ApprovalRequiredError';
+  }
+}
+
 /**
- * Command execution engine with security validation and process management
+ * Command execution engine with security validation, approval workflow, and process management
  */
 export class CommandExecutor extends EventEmitter {
   private securityValidator: SecurityValidator;
+  private approvalManager: ApprovalManager | null = null;
   private activeProcesses = new Map<string, ChildProcess>();
   private processCounter = 0;
   
@@ -54,6 +68,24 @@ export class CommandExecutor extends EventEmitter {
   ) {
     super();
     this.securityValidator = new SecurityValidator(config);
+    
+    // Initialize approval manager if any commands require confirmation
+    if (this.hasCommandsRequiringApproval()) {
+      this.approvalManager = new ApprovalManager(
+        process.cwd(), // Use current working directory for approval queue
+        logger
+      );
+    }
+  }
+
+  /**
+   * Initialize the command executor (async initialization)
+   */
+  async initialize(): Promise<void> {
+    if (this.approvalManager) {
+      await this.approvalManager.initialize();
+      this.logger.info('CommandExecutor', 'Approval system initialized', 'initialize');
+    }
   }
   
   /**
@@ -80,22 +112,29 @@ export class CommandExecutor extends EventEmitter {
       throw new SecurityError(`Command execution denied: ${validation.reason}`, validation.reason || 'Unknown');
     }
     
+    // Check if approval is required for this command
+    const pattern = validation.matchedPattern!;
+    if (pattern.requiresConfirmation && this.approvalManager) {
+      await this.handleApprovalWorkflow(request, pattern);
+    }
+    
     // Check concurrent execution limits
     if (this.activeProcesses.size >= this.config.maxConcurrentCommands) {
       throw new Error(`Maximum concurrent commands reached (${this.config.maxConcurrentCommands})`);
     }
     
-    const pattern = validation.matchedPattern!;
     const timeout = this.securityValidator.getCommandTimeout(pattern);
     const sanitizedArgs = validation.sanitizedArgs || request.args;
     const resolvedWorkingDirectory = this.securityValidator.resolveWorkingDirectory(request.startDirectory, request.workingDirectory || "");
+    
     this.logger.debug('CommandExecutor', 'Resolved working directory is ' + resolvedWorkingDirectory, 'executeCommand');
     this.logger.info('CommandExecutor', 'Executing command', 'executeCommand', {
       command: request.command,
       args: sanitizedArgs,
       workingDirectory: request.workingDirectory,
       timeout,
-      pattern: pattern.description
+      pattern: pattern.description,
+      requiresApproval: pattern.requiresConfirmation
     });
     
     return this.spawnProcess(
@@ -132,11 +171,16 @@ export class CommandExecutor extends EventEmitter {
           throw new SecurityError(`Command execution denied: ${validation.reason}`, validation.reason || 'Unknown');
         }
         
+        // Check if approval is required for this command
+        const pattern = validation.matchedPattern!;
+        if (pattern.requiresConfirmation && this.approvalManager) {
+          await this.handleApprovalWorkflow(request, pattern);
+        }
+        
         if (this.activeProcesses.size >= this.config.maxConcurrentCommands) {
           throw new Error(`Maximum concurrent commands reached (${this.config.maxConcurrentCommands})`);
         }
         
-        const pattern = validation.matchedPattern!;
         const timeout = this.securityValidator.getCommandTimeout(pattern);
         const sanitizedArgs = validation.sanitizedArgs || request.args;
         
@@ -144,8 +188,10 @@ export class CommandExecutor extends EventEmitter {
           command: request.command,
           args: sanitizedArgs,
           workingDirectory: request.workingDirectory,
-          timeout
+          timeout,
+          requiresApproval: pattern.requiresConfirmation
         });
+        
         let resolvedWorkingDirectory = this.securityValidator.resolveWorkingDirectory(request.startDirectory, request.workingDirectory || "");
         const result = await this.spawnProcessStreaming(
           request.command,
@@ -163,6 +209,114 @@ export class CommandExecutor extends EventEmitter {
         reject(error);
       }
     });
+  }
+
+  /**
+   * Get approval manager status (for debugging/monitoring)
+   */
+  getApprovalStatus(): { 
+    enabled: boolean; 
+    serverRunning?: boolean; 
+    serverUrl?: string;
+    pendingRequests?: number;
+  } {
+    if (!this.approvalManager) {
+      return { enabled: false };
+    }
+
+    const serverStatus = this.approvalManager.getServerStatus();
+    
+    return {
+      enabled: true,
+      serverRunning: serverStatus.isRunning,
+      serverUrl: serverStatus.url,
+      // Note: pendingRequests would require async call, could be added if needed
+    };
+  }
+
+  // Private methods
+
+  private hasCommandsRequiringApproval(): boolean {
+    return this.config.allowedCommands.some(cmd => cmd.requiresConfirmation === true);
+  }
+
+  private async handleApprovalWorkflow(request: CommandRequest, pattern: CommandPattern): Promise<void> {
+    if (!this.approvalManager) {
+      throw new Error('Approval manager not initialized but approval required');
+    }
+
+    try {
+      const resolvedWorkingDirectory = this.securityValidator.resolveWorkingDirectory(
+        request.startDirectory, 
+        request.workingDirectory || ""
+      );
+
+      this.logger.info('CommandExecutor', 'Requesting approval for command', 'handleApprovalWorkflow', {
+        command: request.command,
+        args: request.args,
+        workingDirectory: resolvedWorkingDirectory
+      });
+
+      // Request approval and wait for decision
+      const decision = await this.approvalManager.requestApproval(
+        request.command,
+        request.args,
+        resolvedWorkingDirectory,
+        request.timeout || 300000 // 5 minute default timeout
+      );
+
+      if (decision.decision === 'reject') {
+        this.logger.warn('CommandExecutor', 'Command execution rejected by user', 'handleApprovalWorkflow', {
+          command: request.command,
+          args: request.args,
+          decidedBy: decision.decidedBy,
+          reason: decision.reason
+        });
+        
+        throw new SecurityError(
+          `Command execution rejected by ${decision.decidedBy}${decision.reason ? ': ' + decision.reason : ''}`,
+          'USER_REJECTED'
+        );
+      }
+
+      this.logger.info('CommandExecutor', 'Command execution approved by user', 'handleApprovalWorkflow', {
+        command: request.command,
+        args: request.args,
+        decidedBy: decision.decidedBy,
+        decisionTime: Date.now() - decision.timestamp
+      });
+
+    } catch (error) {
+      if (error instanceof ApprovalTimeoutError) {
+        this.logger.warn('CommandExecutor', 'Approval request timed out', 'handleApprovalWorkflow', {
+          command: request.command,
+          args: request.args,
+          timeout: error.message
+        });
+        
+        throw new SecurityError(
+          `Command execution approval timed out. No response received within the timeout period.`,
+          'APPROVAL_TIMEOUT'
+        );
+      }
+
+      if (error instanceof ApprovalError) {
+        this.logger.error('CommandExecutor', 'Approval system error', 'handleApprovalWorkflow', {
+          command: request.command,
+          args: request.args,
+          error: error.message,
+          code: error.code
+        });
+        
+        throw new SecurityError(
+          `Approval system error: ${error.message}`,
+          'APPROVAL_SYSTEM_ERROR'
+        );
+      }
+
+      // Re-throw security errors and other errors as-is
+      throw error;
+    }
   }
   
   /**
@@ -475,11 +629,13 @@ export class CommandExecutor extends EventEmitter {
     activeProcesses: number;
     maxConcurrent: number;
     totalExecuted: number;
+    approvalSystemEnabled: boolean;
   } {
     return {
       activeProcesses: this.activeProcesses.size,
       maxConcurrent: this.config.maxConcurrentCommands,
-      totalExecuted: this.processCounter
+      totalExecuted: this.processCounter,
+      approvalSystemEnabled: this.approvalManager !== null
     };
   }
   
@@ -491,6 +647,18 @@ export class CommandExecutor extends EventEmitter {
       activeProcesses: this.activeProcesses.size,
       graceful
     });
+    
+    // Shutdown approval manager first
+    if (this.approvalManager) {
+      try {
+        await this.approvalManager.shutdown();
+        this.approvalManager = null;
+      } catch (error) {
+        this.logger.error('CommandExecutor', 'Error shutting down approval manager', 'shutdown', {
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+    }
     
     if (graceful) {
       // First try graceful termination

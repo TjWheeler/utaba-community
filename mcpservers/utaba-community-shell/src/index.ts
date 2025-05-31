@@ -144,6 +144,15 @@ const TOOLS: Tool[] = [
       },
       required: []
     }
+  },
+  {
+    name: 'mcp_shell_get_approval_status',
+    description: 'Get status of the approval system for commands requiring confirmation',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: []
+    }
   }
 ];
 
@@ -159,7 +168,7 @@ class MCPShellServer {
     this.server = new Server(
       {
         name: 'utaba-mcp-shell',
-        version: '1.0.0'
+        version: '1.2.0'
       },
       {
         capabilities: {
@@ -224,6 +233,10 @@ class MCPShellServer {
 
           case 'mcp_shell_get_logs':
             result = await this.handleGetLogs(args);
+            break;
+
+          case 'mcp_shell_get_approval_status':
+            result = await this.handleGetApprovalStatus();
             break;
 
           default:
@@ -339,6 +352,8 @@ class MCPShellServer {
       requiresConfirmation: cmd.requiresConfirmation || false
     }));
 
+    const approvalStatus = this.commandExecutor!.getApprovalStatus();
+
     return {
       content: [
         {
@@ -350,6 +365,7 @@ class MCPShellServer {
             defaultTimeout: this.config!.defaultTimeout,
             maxConcurrentCommands: this.config!.maxConcurrentCommands,
             allowedCommands: commands,
+            approvalSystem: approvalStatus,
             securityWarning: 'Commands execute with full system privileges in trusted environment'
           }, null, 2)
         } as TextContent
@@ -360,6 +376,7 @@ class MCPShellServer {
   private async handleGetCommandStatus() {
     const stats = this.commandExecutor!.getStats();
     const activeProcesses = this.commandExecutor!.getActiveProcesses();
+    const approvalStatus = this.commandExecutor!.getApprovalStatus();
 
     return {
       content: [
@@ -373,7 +390,26 @@ class MCPShellServer {
               command: proc.command,
               startTime: proc.startTime,
               runningFor: Date.now() - proc.startTime
-            }))
+            })),
+            approvalSystem: approvalStatus
+          }, null, 2)
+        } as TextContent
+      ]
+    };
+  }
+
+  private async handleGetApprovalStatus() {
+    const approvalStatus = this.commandExecutor!.getApprovalStatus();
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            approvalSystem: approvalStatus,
+            message: approvalStatus.enabled 
+              ? 'Approval system is active for commands requiring confirmation'
+              : 'No commands require approval confirmation'
           }, null, 2)
         } as TextContent
       ]
@@ -471,13 +507,23 @@ class MCPShellServer {
       
       // Initialize logger (it will read LOG_LEVEL and other LOG_* env vars directly)
       await logger.initialize();
+      
       // Log startup information
-      logger.info('MCP-Shell', 'Starting Utaba MCP Shell Server v1.1.1');
+      logger.info('MCP-Shell', 'Starting Utaba MCP Shell Server v1.2.0 with Approval System');
       logger.info('MCP-Shell', `Project roots: ${this.config.projectRoots.join(', ')}`);
       logger.info('MCP-Shell', `Trusted environment: ${this.config.trustedEnvironment}`);
       logger.info('MCP-Shell', `Max concurrent commands: ${this.config.maxConcurrentCommands}`);
       logger.info('MCP-Shell', `Default timeout: ${this.config.defaultTimeout}ms`);
       logger.info('MCP-Shell', `Allowed commands: ${this.config.allowedCommands.length}`);
+
+      // Log approval system status
+      const commandsRequiringApproval = this.config.allowedCommands.filter(cmd => cmd.requiresConfirmation);
+      if (commandsRequiringApproval.length > 0) {
+        logger.info('MCP-Shell', `Commands requiring approval: ${commandsRequiringApproval.map(cmd => cmd.command).join(', ')}`);
+        logger.info('MCP-Shell', 'Approval system will be initialized for browser-based confirmations');
+      } else {
+        logger.info('MCP-Shell', 'No commands require approval - approval system disabled');
+      }
 
       // Security warning
       if (this.config.trustedEnvironment) {
@@ -488,6 +534,9 @@ class MCPShellServer {
 
       // Initialize command executor
       this.commandExecutor = new CommandExecutor(this.config, logger);
+      
+      // Initialize the command executor (this will set up approval system if needed)
+      await this.commandExecutor.initialize();
 
       // Set up graceful shutdown
       process.on('SIGTERM', this.shutdown.bind(this));
