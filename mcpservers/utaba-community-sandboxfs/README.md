@@ -139,7 +139,6 @@ These **optimized** operations are available with **MCP standard naming**:
 | `mcp_sandboxfs_list_directory` | List files and folders in a directory |
 | `mcp_sandboxfs_read_file` | Read file contents with smart encoding detection |
 | `mcp_sandboxfs_write_file` | Create or overwrite file with content |
-| `mcp_sandboxfs_append_file` | Add content to the end of an existing file |
 | `mcp_sandboxfs_delete_file` | Remove a file from the sandbox |
 | `mcp_sandboxfs_create_directory` | Create a new directory |
 | `mcp_sandboxfs_delete_directory` | Remove an empty directory |
