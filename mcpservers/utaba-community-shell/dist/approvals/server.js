@@ -1,460 +1,401 @@
 /**
  * Approval Server - Web UI for Command Approvals
- * 
+ *
  * FIXED: Now uses ApprovalManager instead of ApprovalQueue directly
  * This ensures bridged async jobs are visible in the approval center
  */
-
-import express, { Express, Request, Response } from 'express';
-import { Server as HttpServer } from 'http';
+import express from 'express';
 import crypto from 'crypto';
-import { Logger } from '../logger.js';
-import { ApprovalManager } from './manager.js'; // 🔥 CHANGED: Import manager instead of queue
-import { ApprovalRequest, ApprovalServerConfig, ApprovalServerError } from './types.js';
-
+import { ApprovalServerError } from './types.js';
 export class ApprovalServer {
-  private app: Express;
-  private server: HttpServer | null = null;
-  private authToken: string;
-  private isRunning = false;
-  private port: number | null = null;
-  private connectedClients = new Set<Response>(); // Track SSE connections
-
-  constructor(
-    private approvalManager: ApprovalManager, // 🔥 CHANGED: Use manager instead of queue
-    private config: ApprovalServerConfig,
-    private logger: Logger
-  ) {
-    this.app = express();
-    this.authToken = config.authToken || this.generateAuthToken();
-    
-    this.setupMiddleware();
-    this.setupRoutes();
-    this.setupErrorHandling();
-    this.setupManagerEventListeners(); // 🔥 NEW: Listen to manager events
-  }
-
-  /**
-   * Start the approval server
-   */
-  async start(): Promise<{ port: number; url: string; authToken: string }> {
-    if (this.isRunning) {
-      throw new ApprovalServerError('Server is already running');
+    approvalManager;
+    config;
+    logger;
+    app;
+    server = null;
+    authToken;
+    isRunning = false;
+    port = null;
+    connectedClients = new Set(); // Track SSE connections
+    constructor(approvalManager, // 🔥 CHANGED: Use manager instead of queue
+    config, logger) {
+        this.approvalManager = approvalManager;
+        this.config = config;
+        this.logger = logger;
+        this.app = express();
+        this.authToken = config.authToken || this.generateAuthToken();
+        this.setupMiddleware();
+        this.setupRoutes();
+        this.setupErrorHandling();
+        this.setupManagerEventListeners(); // 🔥 NEW: Listen to manager events
     }
-
-    return new Promise((resolve, reject) => {
-      this.server = this.app.listen(this.config.port || 0, 'localhost', () => {
-        const address = this.server!.address();
-        if (!address || typeof address === 'string') {
-          reject(new ApprovalServerError('Failed to get server address'));
-          return;
+    /**
+     * Start the approval server
+     */
+    async start() {
+        if (this.isRunning) {
+            throw new ApprovalServerError('Server is already running');
         }
-
-        this.port = address.port;
-        this.isRunning = true;
-        
-        const url = `http://localhost:${this.port}?token=${this.authToken}`;
-        
-        this.logger.info('ApprovalServer', 'Server started successfully', 'start', {
-          port: this.port,
-          url: url.replace(this.authToken, '***'),
-          authToken: this.authToken.substring(0, 8) + '***'
-        });
-
-        // Auto-launch browser if configured
-        if (this.config.autoLaunch) {
-          this.launchBrowser(url).catch(error => {
-            this.logger.warn('ApprovalServer', 'Failed to auto-launch browser', 'start', {
-              error: error.message
+        return new Promise((resolve, reject) => {
+            this.server = this.app.listen(this.config.port || 0, 'localhost', () => {
+                const address = this.server.address();
+                if (!address || typeof address === 'string') {
+                    reject(new ApprovalServerError('Failed to get server address'));
+                    return;
+                }
+                this.port = address.port;
+                this.isRunning = true;
+                const url = `http://localhost:${this.port}?token=${this.authToken}`;
+                this.logger.info('ApprovalServer', 'Server started successfully', 'start', {
+                    port: this.port,
+                    url: url.replace(this.authToken, '***'),
+                    authToken: this.authToken.substring(0, 8) + '***'
+                });
+                // Auto-launch browser if configured
+                if (this.config.autoLaunch) {
+                    this.launchBrowser(url).catch(error => {
+                        this.logger.warn('ApprovalServer', 'Failed to auto-launch browser', 'start', {
+                            error: error.message
+                        });
+                    });
+                }
+                resolve({
+                    port: this.port,
+                    url,
+                    authToken: this.authToken
+                });
             });
-          });
+            this.server.on('error', (error) => {
+                this.logger.error('ApprovalServer', 'Server error', 'start', {
+                    error: error.message,
+                    code: error.code
+                });
+                reject(new ApprovalServerError(`Server failed to start: ${error.message}`));
+            });
+        });
+    }
+    /**
+     * Stop the approval server
+     */
+    async stop() {
+        if (!this.isRunning || !this.server) {
+            return;
         }
-
-        resolve({
-          port: this.port,
-          url,
-          authToken: this.authToken
-        });
-      });
-
-      this.server.on('error', (error: any) => {
-        this.logger.error('ApprovalServer', 'Server error', 'start', {
-          error: error.message,
-          code: error.code
-        });
-        reject(new ApprovalServerError(`Server failed to start: ${error.message}`));
-      });
-    });
-  }
-
-  /**
-   * Stop the approval server
-   */
-  async stop(): Promise<void> {
-    if (!this.isRunning || !this.server) {
-      return;
-    }
-
-    // Close all SSE connections
-    for (const client of this.connectedClients) {
-      try {
-        client.end();
-      } catch (error) {
-        // Ignore errors when closing connections
-      }
-    }
-    this.connectedClients.clear();
-
-    return new Promise((resolve) => {
-      this.server!.close(() => {
-        this.isRunning = false;
-        this.port = null;
-        this.server = null;
-        
-        this.logger.info('ApprovalServer', 'Server stopped', 'stop');
-        resolve();
-      });
-    });
-  }
-
-  /**
-   * Get server status
-   */
-  getStatus(): { 
-    isRunning: boolean; 
-    port: number | null; 
-    url: string | null;
-    authToken: string;
-  } {
-    const url = this.port ? `http://localhost:${this.port}?token=${this.authToken}` : null;
-    
-    return {
-      isRunning: this.isRunning,
-      port: this.port,
-      url,
-      authToken: this.authToken
-    };
-  }
-
-  // Private methods
-
-  /**
-   * 🔥 NEW: Set up event listeners for manager events to push real-time updates
-   */
-  private setupManagerEventListeners(): void {
-    this.approvalManager.on('requestCreated', (data) => {
-      this.logger.debug('ApprovalServer', 'Received requestCreated event', 'managerEvent', {
-        requestId: data.requestId,
-        command: data.command
-      });
-      
-      this.broadcastToClients({
-        type: 'requestCreated',
-        data,
-        timestamp: Date.now()
-      });
-    });
-
-    // 🔥 KEY FIX: Listen for requestDecided events and immediately notify all clients
-    this.approvalManager.on('requestDecided', (data) => {
-      this.logger.debug('ApprovalServer', 'Received requestDecided event - broadcasting to clients', 'managerEvent', {
-        requestId: data.requestId,
-        decision: data.decision,
-        decidedBy: data.decidedBy,
-        connectedClients: this.connectedClients.size
-      });
-      
-      this.broadcastToClients({
-        type: 'requestDecided',
-        data,
-        timestamp: Date.now()
-      });
-    });
-  }
-
-  /**
-   * 🔥 NEW: Broadcast events to all connected SSE clients
-   * 🔥 FIXED: Use actual newlines instead of escaped backslashes
-   */
-  private broadcastToClients(event: any): void {
-    const eventData = JSON.stringify(event);
-    
-    for (const client of this.connectedClients) {
-      try {
-        client.write(`data: ${eventData}\n\n`); // 🔥 FIXED: Real newlines
-      } catch (error) {
-        // Remove dead connections
-        this.connectedClients.delete(client);
-        this.logger.debug('ApprovalServer', 'Removed dead SSE connection', 'broadcast');
-      }
-    }
-
-    this.logger.debug('ApprovalServer', 'Broadcast event to clients', 'broadcast', {
-      eventType: event.type,
-      clientCount: this.connectedClients.size,
-      eventData: eventData.substring(0, 100) + '...'
-    });
-  }
-
-  private setupMiddleware(): void {
-    // Parse JSON bodies
-    this.app.use(express.json());
-    
-    // Parse URL-encoded bodies
-    this.app.use(express.urlencoded({ extended: true }));
-    
-    // Security headers
-    this.app.use((req, res, next) => {
-      res.setHeader('X-Content-Type-Options', 'nosniff');
-      res.setHeader('X-Frame-Options', 'DENY');
-      res.setHeader('X-XSS-Protection', '1; mode=block');
-      res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-      res.setHeader('Content-Security-Policy', "default-src 'self' 'unsafe-inline'; connect-src 'self'");
-      next();
-    });
-
-    // Mandatory token authentication middleware
-    this.app.use((req, res, next) => {
-      // Skip auth for health check
-      if (req.path === '/health') {
-        return next();
-      }
-
-      const token = req.query.token || req.headers['authorization']?.replace('Bearer ', '');
-      
-      if (!token || token !== this.authToken) {
-        this.logger.warn('ApprovalServer', 'Unauthorized access attempt', 'auth', {
-          ip: req.ip,
-          path: req.path,
-          userAgent: req.get('User-Agent')
-        });
-        
-        return res.status(401).json({
-          error: 'Unauthorized',
-          message: 'Valid authentication token required'
-        });
-      }
-
-      next();
-    });
-
-    // Logging middleware
-    this.app.use((req, res, next) => {
-      this.logger.debug('ApprovalServer', 'Request received', 'middleware', {
-        method: req.method,
-        path: req.path,
-        ip: req.ip
-      });
-      next();
-    });
-  }
-
-  private setupRoutes(): void {
-    // Health check (no auth required)
-    this.app.get('/health', (req, res) => {
-      res.json({ status: 'ok', timestamp: Date.now() });
-    });
-
-    // Serve static files (approval UI)
-    this.app.get('/', async (req, res) => {
-      try {
-        const htmlContent = await this.generateApprovalUI();
-        res.setHeader('Content-Type', 'text/html');
-        res.send(htmlContent);
-      } catch (error) {
-        this.logger.error('ApprovalServer', 'Failed to serve UI', 'route', {
-          error: error instanceof Error ? error.message : 'Unknown error'
-        });
-        res.status(500).json({ error: 'Failed to load approval interface' });
-      }
-    });
-
-    // API Routes
-
-    // Get pending requests - 🔥 FIXED: Now calls manager instead of queue
-    this.app.get('/api/requests/pending', async (req, res) => {
-      try {
-        const requests = await this.approvalManager.getPendingRequests(); // 🔥 FIXED!
-        res.json({ requests });
-      } catch (error) {
-        this.logger.error('ApprovalServer', 'Failed to get pending requests', 'api', {
-          error: error instanceof Error ? error.message : 'Unknown error'
-        });
-        res.status(500).json({ error: 'Failed to get pending requests' });
-      }
-    });
-
-    // Get queue statistics - 🔥 FIXED: Now calls manager instead of queue
-    this.app.get('/api/stats', async (req, res) => {
-      try {
-        const stats = await this.approvalManager.getStats(); // 🔥 FIXED!
-        res.json({ stats });
-      } catch (error) {
-        this.logger.error('ApprovalServer', 'Failed to get stats', 'api', {
-          error: error instanceof Error ? error.message : 'Unknown error'
-        });
-        res.status(500).json({ error: 'Failed to get statistics' });
-      }
-    });
-
-    // Approve a request - 🔥 FIXED: Now calls manager instead of queue
-    this.app.post('/api/requests/:id/approve', async (req, res) => {
-      try {
-        const { id } = req.params;
-        const { decidedBy = 'browser-user' } = req.body;
-
-        await this.approvalManager.approveRequest(id, decidedBy); // 🔥 FIXED!
-        
-        this.logger.info('ApprovalServer', 'Request approved via browser', 'api', {
-          requestId: id,
-          decidedBy
-        });
-
-        res.json({ success: true, message: 'Request approved' });
-      } catch (error) {
-        this.logger.error('ApprovalServer', 'Failed to approve request', 'api', {
-          requestId: req.params.id,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        });
-        res.status(500).json({ error: 'Failed to approve request' });
-      }
-    });
-
-    // Reject a request - 🔥 FIXED: Now calls manager instead of queue
-    this.app.post('/api/requests/:id/reject', async (req, res) => {
-      try {
-        const { id } = req.params;
-        const { decidedBy = 'browser-user', reason } = req.body;
-
-        await this.approvalManager.rejectRequest(id, decidedBy); // 🔥 FIXED!
-        
-        this.logger.info('ApprovalServer', 'Request rejected via browser', 'api', {
-          requestId: id,
-          decidedBy,
-          reason
-        });
-
-        res.json({ success: true, message: 'Request rejected' });
-      } catch (error) {
-        this.logger.error('ApprovalServer', 'Failed to reject request', 'api', {
-          requestId: req.params.id,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        });
-        res.status(500).json({ error: 'Failed to reject request' });
-      }
-    });
-
-    // Get specific request details
-    this.app.get('/api/requests/:id', async (req, res) => {
-      try {
-        const { id } = req.params;
-        
-        const allRequests = await this.approvalManager.getPendingRequests();
-        const request = allRequests.find(r => r.id === id);
-        
-        if (!request) {
-          return res.status(404).json({ error: 'Request not found' });
+        // Close all SSE connections
+        for (const client of this.connectedClients) {
+            try {
+                client.end();
+            }
+            catch (error) {
+                // Ignore errors when closing connections
+            }
         }
-
-        return res.json({ request });
-      } catch (error) {
-        this.logger.error('ApprovalServer', 'Failed to get request', 'api', {
-          requestId: req.params.id,
-          error: error instanceof Error ? error.message : 'Unknown error'
+        this.connectedClients.clear();
+        return new Promise((resolve) => {
+            this.server.close(() => {
+                this.isRunning = false;
+                this.port = null;
+                this.server = null;
+                this.logger.info('ApprovalServer', 'Server stopped', 'stop');
+                resolve();
+            });
         });
-        return res.status(500).json({ error: 'Failed to get request' });
-      }
-    });
-
-    // Server-Sent Events for real-time updates using manager events
-    // 🔥 FIXED: All SSE writes now use actual newlines instead of escaped backslashes
-    this.app.get('/api/events', (req, res) => {
-      res.setHeader('Content-Type', 'text/event-stream');
-      res.setHeader('Cache-Control', 'no-cache');
-      res.setHeader('Connection', 'keep-alive');
-      res.setHeader('Access-Control-Allow-Origin', '*');
-
-      // Add this client to our tracked connections
-      this.connectedClients.add(res);
-
-      this.logger.debug('ApprovalServer', 'New SSE client connected', 'sse', {
-        totalClients: this.connectedClients.size
-      });
-
-      // Send initial connection event - 🔥 FIXED: Real newlines
-      res.write('data: ' + JSON.stringify({ 
-        type: 'connected', 
-        timestamp: Date.now(),
-        message: 'Real-time updates active'
-      }) + '\n\n');
-
-      // Send current state - 🔥 FIXED: Real newlines
-      this.approvalManager.getPendingRequests().then(requests => {
-        res.write('data: ' + JSON.stringify({ 
-          type: 'initialData', 
-          requests,
-          timestamp: Date.now() 
-        }) + '\n\n');
-      }).catch(error => {
-        this.logger.error('ApprovalServer', 'Failed to send initial SSE data', 'sse', {
-          error: error.message
+    }
+    /**
+     * Get server status
+     */
+    getStatus() {
+        const url = this.port ? `http://localhost:${this.port}?token=${this.authToken}` : null;
+        return {
+            isRunning: this.isRunning,
+            port: this.port,
+            url,
+            authToken: this.authToken
+        };
+    }
+    // Private methods
+    /**
+     * 🔥 NEW: Set up event listeners for manager events to push real-time updates
+     */
+    setupManagerEventListeners() {
+        this.approvalManager.on('requestCreated', (data) => {
+            this.logger.debug('ApprovalServer', 'Received requestCreated event', 'managerEvent', {
+                requestId: data.requestId,
+                command: data.command
+            });
+            this.broadcastToClients({
+                type: 'requestCreated',
+                data,
+                timestamp: Date.now()
+            });
         });
-      });
-
-      // Clean up on client disconnect
-      req.on('close', () => {
-        this.connectedClients.delete(res);
-        this.logger.debug('ApprovalServer', 'SSE client disconnected', 'sse', {
-          totalClients: this.connectedClients.size
+        // 🔥 KEY FIX: Listen for requestDecided events and immediately notify all clients
+        this.approvalManager.on('requestDecided', (data) => {
+            this.logger.debug('ApprovalServer', 'Received requestDecided event - broadcasting to clients', 'managerEvent', {
+                requestId: data.requestId,
+                decision: data.decision,
+                decidedBy: data.decidedBy,
+                connectedClients: this.connectedClients.size
+            });
+            this.broadcastToClients({
+                type: 'requestDecided',
+                data,
+                timestamp: Date.now()
+            });
         });
-      });
-
-      req.on('error', () => {
-        this.connectedClients.delete(res);
-      });
-
-      // Keep connection alive with periodic pings - 🔥 FIXED: Real newlines
-      const keepAlive = setInterval(() => {
-        if (this.connectedClients.has(res)) {
-          try {
-            res.write('data: ' + JSON.stringify({ 
-              type: 'ping', 
-              timestamp: Date.now() 
+    }
+    /**
+     * 🔥 NEW: Broadcast events to all connected SSE clients
+     * 🔥 FIXED: Use actual newlines instead of escaped backslashes
+     */
+    broadcastToClients(event) {
+        const eventData = JSON.stringify(event);
+        for (const client of this.connectedClients) {
+            try {
+                client.write(`data: ${eventData}\n\n`); // 🔥 FIXED: Real newlines
+            }
+            catch (error) {
+                // Remove dead connections
+                this.connectedClients.delete(client);
+                this.logger.debug('ApprovalServer', 'Removed dead SSE connection', 'broadcast');
+            }
+        }
+        this.logger.debug('ApprovalServer', 'Broadcast event to clients', 'broadcast', {
+            eventType: event.type,
+            clientCount: this.connectedClients.size,
+            eventData: eventData.substring(0, 100) + '...'
+        });
+    }
+    setupMiddleware() {
+        // Parse JSON bodies
+        this.app.use(express.json());
+        // Parse URL-encoded bodies
+        this.app.use(express.urlencoded({ extended: true }));
+        // Security headers
+        this.app.use((req, res, next) => {
+            res.setHeader('X-Content-Type-Options', 'nosniff');
+            res.setHeader('X-Frame-Options', 'DENY');
+            res.setHeader('X-XSS-Protection', '1; mode=block');
+            res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+            res.setHeader('Content-Security-Policy', "default-src 'self' 'unsafe-inline'; connect-src 'self'");
+            next();
+        });
+        // Mandatory token authentication middleware
+        this.app.use((req, res, next) => {
+            // Skip auth for health check
+            if (req.path === '/health') {
+                return next();
+            }
+            const token = req.query.token || req.headers['authorization']?.replace('Bearer ', '');
+            if (!token || token !== this.authToken) {
+                this.logger.warn('ApprovalServer', 'Unauthorized access attempt', 'auth', {
+                    ip: req.ip,
+                    path: req.path,
+                    userAgent: req.get('User-Agent')
+                });
+                return res.status(401).json({
+                    error: 'Unauthorized',
+                    message: 'Valid authentication token required'
+                });
+            }
+            next();
+        });
+        // Logging middleware
+        this.app.use((req, res, next) => {
+            this.logger.debug('ApprovalServer', 'Request received', 'middleware', {
+                method: req.method,
+                path: req.path,
+                ip: req.ip
+            });
+            next();
+        });
+    }
+    setupRoutes() {
+        // Health check (no auth required)
+        this.app.get('/health', (req, res) => {
+            res.json({ status: 'ok', timestamp: Date.now() });
+        });
+        // Serve static files (approval UI)
+        this.app.get('/', async (req, res) => {
+            try {
+                const htmlContent = await this.generateApprovalUI();
+                res.setHeader('Content-Type', 'text/html');
+                res.send(htmlContent);
+            }
+            catch (error) {
+                this.logger.error('ApprovalServer', 'Failed to serve UI', 'route', {
+                    error: error instanceof Error ? error.message : 'Unknown error'
+                });
+                res.status(500).json({ error: 'Failed to load approval interface' });
+            }
+        });
+        // API Routes
+        // Get pending requests - 🔥 FIXED: Now calls manager instead of queue
+        this.app.get('/api/requests/pending', async (req, res) => {
+            try {
+                const requests = await this.approvalManager.getPendingRequests(); // 🔥 FIXED!
+                res.json({ requests });
+            }
+            catch (error) {
+                this.logger.error('ApprovalServer', 'Failed to get pending requests', 'api', {
+                    error: error instanceof Error ? error.message : 'Unknown error'
+                });
+                res.status(500).json({ error: 'Failed to get pending requests' });
+            }
+        });
+        // Get queue statistics - 🔥 FIXED: Now calls manager instead of queue
+        this.app.get('/api/stats', async (req, res) => {
+            try {
+                const stats = await this.approvalManager.getStats(); // 🔥 FIXED!
+                res.json({ stats });
+            }
+            catch (error) {
+                this.logger.error('ApprovalServer', 'Failed to get stats', 'api', {
+                    error: error instanceof Error ? error.message : 'Unknown error'
+                });
+                res.status(500).json({ error: 'Failed to get statistics' });
+            }
+        });
+        // Approve a request - 🔥 FIXED: Now calls manager instead of queue
+        this.app.post('/api/requests/:id/approve', async (req, res) => {
+            try {
+                const { id } = req.params;
+                const { decidedBy = 'browser-user' } = req.body;
+                await this.approvalManager.approveRequest(id, decidedBy); // 🔥 FIXED!
+                this.logger.info('ApprovalServer', 'Request approved via browser', 'api', {
+                    requestId: id,
+                    decidedBy
+                });
+                res.json({ success: true, message: 'Request approved' });
+            }
+            catch (error) {
+                this.logger.error('ApprovalServer', 'Failed to approve request', 'api', {
+                    requestId: req.params.id,
+                    error: error instanceof Error ? error.message : 'Unknown error'
+                });
+                res.status(500).json({ error: 'Failed to approve request' });
+            }
+        });
+        // Reject a request - 🔥 FIXED: Now calls manager instead of queue
+        this.app.post('/api/requests/:id/reject', async (req, res) => {
+            try {
+                const { id } = req.params;
+                const { decidedBy = 'browser-user', reason } = req.body;
+                await this.approvalManager.rejectRequest(id, decidedBy); // 🔥 FIXED!
+                this.logger.info('ApprovalServer', 'Request rejected via browser', 'api', {
+                    requestId: id,
+                    decidedBy,
+                    reason
+                });
+                res.json({ success: true, message: 'Request rejected' });
+            }
+            catch (error) {
+                this.logger.error('ApprovalServer', 'Failed to reject request', 'api', {
+                    requestId: req.params.id,
+                    error: error instanceof Error ? error.message : 'Unknown error'
+                });
+                res.status(500).json({ error: 'Failed to reject request' });
+            }
+        });
+        // Get specific request details
+        this.app.get('/api/requests/:id', async (req, res) => {
+            try {
+                const { id } = req.params;
+                const allRequests = await this.approvalManager.getPendingRequests();
+                const request = allRequests.find(r => r.id === id);
+                if (!request) {
+                    return res.status(404).json({ error: 'Request not found' });
+                }
+                return res.json({ request });
+            }
+            catch (error) {
+                this.logger.error('ApprovalServer', 'Failed to get request', 'api', {
+                    requestId: req.params.id,
+                    error: error instanceof Error ? error.message : 'Unknown error'
+                });
+                return res.status(500).json({ error: 'Failed to get request' });
+            }
+        });
+        // Server-Sent Events for real-time updates using manager events
+        // 🔥 FIXED: All SSE writes now use actual newlines instead of escaped backslashes
+        this.app.get('/api/events', (req, res) => {
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.setHeader('Cache-Control', 'no-cache');
+            res.setHeader('Connection', 'keep-alive');
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            // Add this client to our tracked connections
+            this.connectedClients.add(res);
+            this.logger.debug('ApprovalServer', 'New SSE client connected', 'sse', {
+                totalClients: this.connectedClients.size
+            });
+            // Send initial connection event - 🔥 FIXED: Real newlines
+            res.write('data: ' + JSON.stringify({
+                type: 'connected',
+                timestamp: Date.now(),
+                message: 'Real-time updates active'
             }) + '\n\n');
-          } catch (error) {
-            this.connectedClients.delete(res);
-            clearInterval(keepAlive);
-          }
-        } else {
-          clearInterval(keepAlive);
-        }
-      }, 30000); // Ping every 30 seconds
-
-      req.on('close', () => {
-        clearInterval(keepAlive);
-      });
-    });
-  }
-
-  private setupErrorHandling(): void {
-    // Global error handler
-    this.app.use((err: any, req: Request, res: Response, next: any) => {
-      this.logger.error('ApprovalServer', 'Unhandled server error', 'errorHandler', {
-        error: err.message,
-        stack: err.stack,
-        path: req.path,
-        method: req.method
-      });
-
-      res.status(500).json({
-        error: 'Internal server error',
-        message: 'An unexpected error occurred'
-      });
-    });
-  }
-
-  private async generateApprovalUI(): Promise<string> {
-    return `<!DOCTYPE html>
+            // Send current state - 🔥 FIXED: Real newlines
+            this.approvalManager.getPendingRequests().then(requests => {
+                res.write('data: ' + JSON.stringify({
+                    type: 'initialData',
+                    requests,
+                    timestamp: Date.now()
+                }) + '\n\n');
+            }).catch(error => {
+                this.logger.error('ApprovalServer', 'Failed to send initial SSE data', 'sse', {
+                    error: error.message
+                });
+            });
+            // Clean up on client disconnect
+            req.on('close', () => {
+                this.connectedClients.delete(res);
+                this.logger.debug('ApprovalServer', 'SSE client disconnected', 'sse', {
+                    totalClients: this.connectedClients.size
+                });
+            });
+            req.on('error', () => {
+                this.connectedClients.delete(res);
+            });
+            // Keep connection alive with periodic pings - 🔥 FIXED: Real newlines
+            const keepAlive = setInterval(() => {
+                if (this.connectedClients.has(res)) {
+                    try {
+                        res.write('data: ' + JSON.stringify({
+                            type: 'ping',
+                            timestamp: Date.now()
+                        }) + '\n\n');
+                    }
+                    catch (error) {
+                        this.connectedClients.delete(res);
+                        clearInterval(keepAlive);
+                    }
+                }
+                else {
+                    clearInterval(keepAlive);
+                }
+            }, 30000); // Ping every 30 seconds
+            req.on('close', () => {
+                clearInterval(keepAlive);
+            });
+        });
+    }
+    setupErrorHandling() {
+        // Global error handler
+        this.app.use((err, req, res, next) => {
+            this.logger.error('ApprovalServer', 'Unhandled server error', 'errorHandler', {
+                error: err.message,
+                stack: err.stack,
+                path: req.path,
+                method: req.method
+            });
+            res.status(500).json({
+                error: 'Internal server error',
+                message: 'An unexpected error occurred'
+            });
+        });
+    }
+    async generateApprovalUI() {
+        return `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -1132,43 +1073,40 @@ export class ApprovalServer {
     </script>
 </body>
 </html>`;
-  }
-
-  private generateAuthToken(): string {
-    return crypto.randomBytes(32).toString('hex');
-  }
-
-  private async launchBrowser(url: string): Promise<void> {
-    try {
-      const { spawn } = await import('child_process');
-      
-      let command: string;
-      let args: string[];
-
-      if (process.platform === 'win32') {
-        command = 'cmd';
-        args = ['/c', 'start', url];
-      } else if (process.platform === 'darwin') {
-        command = 'open';
-        args = [url];
-      } else {
-        command = 'xdg-open';
-        args = [url];
-      }
-
-      const child = spawn(command, args, { 
-        detached: true, 
-        stdio: 'ignore' 
-      });
-      
-      child.unref();
-
-      this.logger.info('ApprovalServer', 'Browser launched', 'launchBrowser', { url });
-    } catch (error) {
-      this.logger.warn('ApprovalServer', 'Failed to launch browser', 'launchBrowser', {
-        error: error instanceof Error ? error.message : 'Unknown error',
-        url
-      });
     }
-  }
+    generateAuthToken() {
+        return crypto.randomBytes(32).toString('hex');
+    }
+    async launchBrowser(url) {
+        try {
+            const { spawn } = await import('child_process');
+            let command;
+            let args;
+            if (process.platform === 'win32') {
+                command = 'cmd';
+                args = ['/c', 'start', url];
+            }
+            else if (process.platform === 'darwin') {
+                command = 'open';
+                args = [url];
+            }
+            else {
+                command = 'xdg-open';
+                args = [url];
+            }
+            const child = spawn(command, args, {
+                detached: true,
+                stdio: 'ignore'
+            });
+            child.unref();
+            this.logger.info('ApprovalServer', 'Browser launched', 'launchBrowser', { url });
+        }
+        catch (error) {
+            this.logger.warn('ApprovalServer', 'Failed to launch browser', 'launchBrowser', {
+                error: error instanceof Error ? error.message : 'Unknown error',
+                url
+            });
+        }
+    }
 }
+//# sourceMappingURL=server.js.map
