@@ -216,7 +216,7 @@ export async function loadConfig(configPath?: string): Promise<Config> {
 }
 
 export async function startDirectory(): Promise<string> {
-  const startDir = process.env.MCP_SHELL_START_DIRECTORY || "";
+  const startDir = process.env.MCP_SHELL_START_DIRECTORY || process.cwd();
   
   try {
     process.chdir(startDir);

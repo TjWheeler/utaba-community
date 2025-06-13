@@ -115,30 +115,30 @@ const TOOLS: Tool[] = [
       required: ['path', 'content']
     }
   },
-  {
-    name: 'mcp_sandboxfs_append_file',
-    description: 'Append content to an existing file',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        path: {
-          type: 'string',
-          description: 'Relative path to the file'
-        },
-        content: {
-          type: 'string',
-          description: 'Content to append (text or base64 encoded binary)'
-        },
-        encoding: {
-          type: 'string',
-          description: 'Encoding: utf-8 or base64',
-          enum: ['utf-8', 'base64'],
-          default: 'utf-8'
-        }
-      },
-      required: ['path', 'content']
-    }
-  },
+  // {
+  //   name: 'mcp_sandboxfs_append_file',
+  //   description: 'Append content to an existing file',
+  //   inputSchema: {
+  //     type: 'object',
+  //     properties: {
+  //       path: {
+  //         type: 'string',
+  //         description: 'Relative path to the file'
+  //       },
+  //       content: {
+  //         type: 'string',
+  //         description: 'Content to append (text or base64 encoded binary)'
+  //       },
+  //       encoding: {
+  //         type: 'string',
+  //         description: 'Encoding: utf-8 or base64',
+  //         enum: ['utf-8', 'base64'],
+  //         default: 'utf-8'
+  //       }
+  //     },
+  //     required: ['path', 'content']
+  //   }
+  // },
   {
     name: 'mcp_sandboxfs_delete_file',
     description: 'Delete a file',
@@ -321,9 +321,9 @@ class SandboxFileSystemServer {
             result = await this.handleWriteFile(args);
             break;
             
-          case 'mcp_sandboxfs_append_file':
-            result = await this.handleAppendFile(args);
-            break;
+          // case 'mcp_sandboxfs_append_file':
+          //   result = await this.handleAppendFile(args);
+          //   break;
             
           case 'mcp_sandboxfs_delete_file':
             result = await this.handleDeleteFile(args);

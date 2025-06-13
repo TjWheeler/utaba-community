@@ -214,13 +214,13 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'mcp_shell_kill_command',
-    description: 'Kill a running command by process ID',
+    description: 'Kill a running command by process ID. Accepts both system PID (e.g., "1234") and internal process ID (e.g., "proc_1") from mcp_shell_get_command_status.',
     inputSchema: {
       type: 'object',
       properties: {
         processId: {
           type: 'string',
-          description: 'Process ID to kill'
+          description: 'Process ID to kill - can be system PID (numeric) or internal process ID from get_command_status'
         },
         signal: {
           type: 'string',
