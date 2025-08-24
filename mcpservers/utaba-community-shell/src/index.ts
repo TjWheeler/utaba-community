@@ -11,7 +11,7 @@ import {
   McpError
 } from '@modelcontextprotocol/sdk/types.js';
 import { loadConfig, validateConfig, getEnvironmentOverrides, Config, startDirectory } from './config.js';
-import { CommandExecutor, CommandRequest, CommandUtils } from './commandExecutor.js';
+import { CommandExecutor, CommandRequest, CommandUtils, CommandExecutionError } from './commandExecutor.js';
 import { SecurityError } from './security.js';
 import { Logger, LogLevel, PerformanceTimer, logger } from './logger.js';
 
@@ -417,7 +417,42 @@ class MCPShellServer {
             `${args.command} ${Array.isArray(args.args) ? args.args.join(' ') : ''}`.trim() : 
             'unknown command';
           logger.logSecurity('MCP-Server', name, commandStr, true, error.reason);
-          throw new McpError(ErrorCode.InvalidRequest, error.message);
+          
+          // Enhanced security error response with detailed information
+          const errorDetails = {
+            category: error.details?.category,
+            violationType: error.details?.violationType,
+            command: error.details?.command,
+            workingDirectory: error.details?.workingDirectory,
+            suggestedAction: error.details?.suggestedAction,
+            securityContext: error.details?.securityContext
+          };
+          
+          const detailedMessage = `Security violation: ${error.message}\n\nDetails:\n${JSON.stringify(errorDetails, null, 2)}`;
+          throw new McpError(ErrorCode.InvalidRequest, detailedMessage);
+        }
+
+        if (error instanceof CommandExecutionError) {
+          // Provide detailed error information for command execution failures
+          const errorContext = {
+            category: error.errorDetails.category,
+            command: error.errorDetails.command,
+            workingDirectory: error.errorDetails.workingDirectory,
+            systemError: error.errorDetails.systemError?.code,
+            suggestedAction: error.errorDetails.suggestedAction,
+            stdout: error.stdout,
+            stderr: error.stderr,
+            exitCode: error.exitCode
+          };
+          
+          logger.error('MCP-Server', `Command execution failed: ${name}`, name, { 
+            error: error.message, 
+            errorDetails: error.errorDetails,
+            args 
+          });
+          
+          const detailedMessage = `${error.message}\n\nDetails:\n${JSON.stringify(errorContext, null, 2)}`;
+          throw new McpError(ErrorCode.InternalError, detailedMessage);
         }
 
         if (error instanceof Error) {
@@ -636,7 +671,9 @@ class MCPShellServer {
             killed: result.killed,
             pid: result.pid,
             stdout: result.stdout,
-            stderr: result.stderr
+            stderr: result.stderr,
+            commandContext: result.commandContext,
+            errorDetails: result.errorDetails
           }, null, 2)
         } as TextContent
       ]
@@ -674,7 +711,9 @@ class MCPShellServer {
             pid: result.pid,
             streamedOutput: streamOutput,
             finalStdout: result.stdout,
-            finalStderr: result.stderr
+            finalStderr: result.stderr,
+            commandContext: result.commandContext,
+            errorDetails: result.errorDetails
           }, null, 2)
         } as TextContent
       ]

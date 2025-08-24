@@ -4,10 +4,140 @@ import { Config, CommandPattern } from "./config";
 import { Logger } from "./logger.js";
 import { L } from "vitest/dist/chunks/reporters.d.C-cu31ET";
 
+export interface SecurityErrorDetails {
+  reason: string;
+  category: 'command_whitelist' | 'argument_validation' | 'path_restriction' | 'environment' | 'approval' | 'injection';
+  command?: string;
+  args?: string[];
+  workingDirectory?: string;
+  violationType: 'denied_command' | 'invalid_argument' | 'path_violation' | 'injection_attempt' | 'approval_required' | 'environment_violation';
+  suggestedAction?: string;
+  securityContext?: {
+    projectRoots?: string[];
+    allowedCommands?: string[];
+    blockedPatterns?: string[];
+  };
+}
+
 export class SecurityError extends Error {
-  constructor(message: string, public readonly reason: string) {
+  public readonly details: SecurityErrorDetails;
+  
+  constructor(message: string, reason: string, details?: Partial<SecurityErrorDetails>) {
     super(message);
     this.name = "SecurityError";
+    this.reason = reason; // Keep for backward compatibility
+    
+    this.details = {
+      reason,
+      category: 'command_whitelist',
+      violationType: 'denied_command',
+      ...details
+    };
+  }
+  
+  // Keep reason property for backward compatibility
+  public readonly reason: string;
+  
+  /**
+   * Create security error for denied command
+   */
+  static commandDenied(
+    command: string,
+    args: string[],
+    workingDirectory: string,
+    allowedCommands: string[]
+  ): SecurityError {
+    const message = `Command '${command}' is not in the whitelist`;
+    const reason = 'COMMAND_NOT_WHITELISTED';
+    
+    return new SecurityError(message, reason, {
+      category: 'command_whitelist',
+      command,
+      args,
+      workingDirectory,
+      violationType: 'denied_command',
+      suggestedAction: `Add '${command}' to the allowed commands list in configuration`,
+      securityContext: {
+        allowedCommands
+      }
+    });
+  }
+  
+  /**
+   * Create security error for invalid arguments
+   */
+  static invalidArguments(
+    command: string,
+    args: string[],
+    invalidArg: string,
+    allowedArgs?: string[],
+    allowedPatterns?: string[]
+  ): SecurityError {
+    const message = `Argument '${invalidArg}' is not allowed for command '${command}'`;
+    const reason = 'INVALID_ARGUMENTS';
+    
+    return new SecurityError(message, reason, {
+      category: 'argument_validation',
+      command,
+      args,
+      violationType: 'invalid_argument',
+      suggestedAction: allowedArgs 
+        ? `Use one of the allowed arguments: ${allowedArgs.join(', ')}`
+        : 'Check command configuration for allowed argument patterns',
+      securityContext: {
+        allowedCommands: allowedArgs,
+        blockedPatterns: allowedPatterns
+      }
+    });
+  }
+  
+  /**
+   * Create security error for injection attempts
+   */
+  static injectionAttempt(
+    command: string,
+    args: string[],
+    suspiciousArg: string,
+    pattern: string
+  ): SecurityError {
+    const message = `Potential injection pattern detected in argument: ${suspiciousArg}`;
+    const reason = 'INJECTION_ATTEMPT';
+    
+    return new SecurityError(message, reason, {
+      category: 'injection',
+      command,
+      args,
+      violationType: 'injection_attempt',
+      suggestedAction: 'Remove special characters and command injection patterns from arguments',
+      securityContext: {
+        blockedPatterns: [pattern]
+      }
+    });
+  }
+  
+  /**
+   * Create security error for path violations
+   */
+  static pathViolation(
+    command: string,
+    args: string[],
+    workingDirectory: string,
+    projectRoots: string[]
+  ): SecurityError {
+    const message = `Working directory '${workingDirectory}' is not within allowed project roots`;
+    const reason = 'PATH_VIOLATION';
+    
+    return new SecurityError(message, reason, {
+      category: 'path_restriction',
+      command,
+      args,
+      workingDirectory,
+      violationType: 'path_violation',
+      suggestedAction: `Use a working directory within project roots: ${projectRoots.join(', ')}`,
+      securityContext: {
+        projectRoots
+      }
+    });
   }
 }
 
@@ -16,6 +146,7 @@ export interface ValidationResult {
   reason?: string;
   matchedPattern?: CommandPattern;
   sanitizedArgs?: string[];
+  securityError?: SecurityError; // Enhanced error with details
 }
 
 /**
@@ -41,9 +172,18 @@ export class SecurityValidator {
     // Find matching command pattern
     const pattern = this.findMatchingPattern(command);
     if (!pattern) {
+      const allowedCommands = this.config.allowedCommands.map(cmd => cmd.command);
+      const securityError = SecurityError.commandDenied(
+        command,
+        args,
+        workingDirectory,
+        allowedCommands
+      );
+      
       return {
         allowed: false,
         reason: `Command '${command}' is not in the whitelist`,
+        securityError
       };
     }
 

@@ -14,7 +14,8 @@ import {
   JobStatus, 
   JobResultData,
   ProcessorConfig,
-  OperationType 
+  OperationType,
+  JobDetailedError
 } from './types.js';
 import { 
   generateExecutionToken,
@@ -39,6 +40,52 @@ export class AsyncJobProcessor extends EventEmitter {
     private logger: Logger
   ) {
     super();
+  }
+
+  /**
+   * Convert Node.js spawn error to JobDetailedError
+   */
+  private createDetailedError(
+    error: NodeJS.ErrnoException,
+    job: JobRecord,
+    category: 'spawn' | 'execution' | 'timeout' | 'approval' | 'system' = 'execution'
+  ): JobDetailedError {
+    return {
+      message: error.message,
+      code: error.code,
+      category,
+      command: job.command,
+      args: job.args,
+      workingDirectory: job.workingDirectory,
+      systemError: {
+        errno: error.errno,
+        code: error.code,
+        syscall: error.syscall,
+        path: error.path
+      },
+      suggestedAction: this.getSuggestedActionForError(error),
+      originalError: error.message,
+      timestamp: Date.now()
+    };
+  }
+
+  /**
+   * Get suggested action for common errors
+   */
+  private getSuggestedActionForError(error: NodeJS.ErrnoException): string {
+    switch (error.code) {
+      case 'ENOENT':
+        return 'Command not found. Check if the command is installed and in PATH';
+      case 'EACCES':
+        return 'Permission denied. Check file permissions or run with appropriate privileges';
+      case 'EMFILE':
+      case 'ENFILE':
+        return 'Too many open files. Close other processes or increase system limits';
+      case 'ENOMEM':
+        return 'Out of memory. Close other applications or increase available memory';
+      default:
+        return 'Check command syntax and system configuration';
+    }
   }
 
   /**
@@ -297,6 +344,28 @@ export class AsyncJobProcessor extends EventEmitter {
             message = 'Command execution timed out';
           }
 
+          // Create detailed error for execution failures
+          const detailedError: JobDetailedError = {
+            message: `${message}. Exit code: ${code}`,
+            code: `EXIT_CODE_${code}`,
+            category: resultData.timedOut ? 'timeout' : 'execution',
+            command: job.command,
+            args: job.args,
+            workingDirectory: job.workingDirectory,
+            processState: {
+              pid: resultData.pid,
+              spawnfile: job.command,
+              spawnargs: [job.command, ...job.args],
+              killed: resultData.killed || false,
+              exitCode: code,
+              signalCode: null
+            },
+            suggestedAction: resultData.timedOut 
+              ? 'Consider increasing timeout or optimizing the command'
+              : 'Check stderr output and command arguments',
+            timestamp: Date.now()
+          };
+
           await this.queue.updateJob(jobId, {
             status,
             completedAt: resultData.endTime,
@@ -308,25 +377,34 @@ export class AsyncJobProcessor extends EventEmitter {
             error: `${message}. Exit code: ${code}`,
             progressMessage: message,
             progressPercentage: 100,
-            currentPhase: 'failed'
+            currentPhase: 'failed',
+            detailedError
           });
 
           this.emit('jobFailed', jobId, { 
             error: message, 
             exitCode: code,
-            timedOut: resultData.timedOut 
+            timedOut: resultData.timedOut,
+            detailedError
           });
         }
       });
 
-      // Handle process errors
-      child.on('error', async (error) => {
+      // Handle process errors with detailed information
+      child.on('error', async (error: NodeJS.ErrnoException) => {
         clearTimeout(timeoutHandle);
         this.activeProcesses.delete(jobId);
 
+        const detailedError = this.createDetailedError(error, job, 'spawn');
+
         this.logger.error('AsyncJobProcessor', 'Job execution error', 'executeJob', {
           jobId,
-          error: error.message
+          error: error.message,
+          errno: error.errno,
+          code: error.code,
+          syscall: error.syscall,
+          path: error.path,
+          detailedError
         });
 
         await this.queue.updateJob(jobId, {
@@ -334,19 +412,37 @@ export class AsyncJobProcessor extends EventEmitter {
           completedAt: Date.now(),
           error: `Process error: ${error.message}`,
           progressMessage: 'Command execution failed',
-          currentPhase: 'failed'
+          currentPhase: 'failed',
+          detailedError
         });
 
-        this.emit('jobFailed', jobId, { error: error.message });
+        this.emit('jobFailed', jobId, { 
+          error: error.message,
+          detailedError 
+        });
       });
 
     } catch (error) {
       this.activeProcesses.delete(jobId);
       
       const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      
+      // Create detailed error for setup failures
+      const detailedError: JobDetailedError = {
+        message: errorMsg,
+        category: 'system',
+        command: job.command,
+        args: job.args,
+        workingDirectory: job.workingDirectory,
+        suggestedAction: 'Check system resources and permissions',
+        originalError: errorMsg,
+        timestamp: Date.now()
+      };
+      
       this.logger.error('AsyncJobProcessor', 'Failed to execute job', 'executeJob', {
         jobId,
-        error: errorMsg
+        error: errorMsg,
+        detailedError
       });
 
       await this.queue.updateJob(jobId, {
@@ -354,10 +450,14 @@ export class AsyncJobProcessor extends EventEmitter {
         completedAt: Date.now(),
         error: `Execution setup failed: ${errorMsg}`,
         progressMessage: 'Failed to start command execution',
-        currentPhase: 'failed'
+        currentPhase: 'failed',
+        detailedError
       });
 
-      this.emit('jobFailed', jobId, { error: errorMsg });
+      this.emit('jobFailed', jobId, { 
+        error: errorMsg,
+        detailedError 
+      });
     }
   }
 
