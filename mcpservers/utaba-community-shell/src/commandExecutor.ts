@@ -29,6 +29,29 @@ export interface CommandRequest {
   timeout?: number;
 }
 
+export interface ProcessState {
+  pid?: number;
+  spawnfile: string;
+  spawnargs: string[];
+  killed: boolean;
+  exitCode: number | null;
+  signalCode: NodeJS.Signals | null;
+}
+
+export interface DetailedErrorInfo {
+  message: string;
+  code?: string;
+  category: 'spawn' | 'execution' | 'timeout' | 'security' | 'system';
+  command: string;
+  args: string[];
+  workingDirectory: string;
+  systemError?: NodeJS.ErrnoException;
+  processState?: ProcessState;
+  environmentContext?: Record<string, string>;
+  suggestedAction?: string;
+  originalError?: Error;
+}
+
 export interface CommandResult {
   exitCode: number | null;
   stdout: string;
@@ -37,6 +60,14 @@ export interface CommandResult {
   timedOut: boolean;
   killed: boolean;
   pid?: number;
+  errorDetails?: DetailedErrorInfo;
+  commandContext?: {
+    command: string;
+    args: string[];
+    workingDirectory: string;
+    environment?: Record<string, string>;
+    timeout: number;
+  };
 }
 
 export interface StreamingCommandResult extends CommandResult {
@@ -53,14 +84,105 @@ export interface AsyncJobSubmission {
 }
 
 export class CommandExecutionError extends Error {
+  public readonly errorDetails: DetailedErrorInfo;
+  
   constructor(
     message: string,
     public readonly exitCode: number | null,
     public readonly stdout: string,
-    public readonly stderr: string
+    public readonly stderr: string,
+    errorDetails?: Partial<DetailedErrorInfo>
   ) {
     super(message);
     this.name = 'CommandExecutionError';
+    
+    this.errorDetails = {
+      message,
+      category: 'execution',
+      command: errorDetails?.command || 'unknown',
+      args: errorDetails?.args || [],
+      workingDirectory: errorDetails?.workingDirectory || 'unknown',
+      ...errorDetails
+    };
+  }
+  
+  /**
+   * Create error from system spawn error
+   */
+  static fromSpawnError(
+    error: NodeJS.ErrnoException,
+    command: string,
+    args: string[],
+    workingDirectory: string,
+    stdout: string = '',
+    stderr: string = ''
+  ): CommandExecutionError {
+    const suggestedAction = CommandExecutionError.getSuggestedActionForSpawnError(error);
+    
+    return new CommandExecutionError(
+      `Command spawn failed: ${error.message}`,
+      null,
+      stdout,
+      stderr,
+      {
+        category: 'spawn',
+        command,
+        args,
+        workingDirectory,
+        systemError: error,
+        suggestedAction,
+        originalError: error,
+        code: error.code
+      }
+    );
+  }
+  
+  /**
+   * Create error from timeout
+   */
+  static fromTimeout(
+    command: string,
+    args: string[],
+    workingDirectory: string,
+    timeout: number,
+    executionTime: number,
+    processState: ProcessState,
+    stdout: string,
+    stderr: string
+  ): CommandExecutionError {
+    const message = `Command timed out after ${timeout}ms (executed for ${executionTime}ms)`;
+    
+    return new CommandExecutionError(
+      message,
+      null,
+      stdout,
+      stderr,
+      {
+        category: 'timeout',
+        command,
+        args,
+        workingDirectory,
+        processState,
+        suggestedAction: 'Consider increasing the timeout value or optimizing the command',
+        code: 'TIMEOUT'
+      }
+    );
+  }
+  
+  private static getSuggestedActionForSpawnError(error: NodeJS.ErrnoException): string {
+    switch (error.code) {
+      case 'ENOENT':
+        return 'Command not found. Check if the command is installed and in PATH';
+      case 'EACCES':
+        return 'Permission denied. Check file permissions or run with appropriate privileges';
+      case 'EMFILE':
+      case 'ENFILE':
+        return 'Too many open files. Close other processes or increase system limits';
+      case 'ENOMEM':
+        return 'Out of memory. Close other applications or increase available memory';
+      default:
+        return 'Check command syntax and system configuration';
+    }
   }
 }
 
@@ -177,7 +299,13 @@ export class CommandExecutor extends EventEmitter {
         args: request.args,
         reason: validation.reason
       });
-      throw new SecurityError(`Command execution denied: ${validation.reason}`, validation.reason || 'Unknown');
+      
+      // Use enhanced security error if available, otherwise create basic one
+      if (validation.securityError) {
+        throw validation.securityError;
+      } else {
+        throw new SecurityError(`Command execution denied: ${validation.reason}`, validation.reason || 'Unknown');
+      }
     }
 
     const pattern = validation.matchedPattern!;
@@ -363,7 +491,14 @@ export class CommandExecutor extends EventEmitter {
         timedOut: job.timedOut || false,
         killed: job.killed || false,
         pid: job.pid,
-        completedAt: job.completedAt || Date.now()
+        completedAt: job.completedAt || Date.now(),
+        errorDetails: job.detailedError,
+        commandContext: {
+          command: job.command,
+          args: job.args,
+          workingDirectory: job.workingDirectory,
+          timeout: job.requestedTimeout
+        }
       };
 
       this.logger.info('CommandExecutor', 'Job result retrieved', 'getJobResult', {
@@ -497,7 +632,13 @@ export class CommandExecutor extends EventEmitter {
         args: request.args,
         reason: validation.reason
       });
-      throw new SecurityError(`Command execution denied: ${validation.reason}`, validation.reason || 'Unknown');
+      
+      // Use enhanced security error if available, otherwise create basic one
+      if (validation.securityError) {
+        throw validation.securityError;
+      } else {
+        throw new SecurityError(`Command execution denied: ${validation.reason}`, validation.reason || 'Unknown');
+      }
     }
     
     // Check if approval is required for this command
@@ -556,7 +697,18 @@ export class CommandExecutor extends EventEmitter {
         );
         
         if (!validation.allowed) {
-          throw new SecurityError(`Command execution denied: ${validation.reason}`, validation.reason || 'Unknown');
+          this.logger.warn('CommandExecutor', 'Streaming command execution blocked', 'executeCommandStreaming', {
+            command: request.command,
+            args: request.args,
+            reason: validation.reason
+          });
+          
+          // Use enhanced security error if available, otherwise create basic one
+          if (validation.securityError) {
+            throw validation.securityError;
+          } else {
+            throw new SecurityError(`Command execution denied: ${validation.reason}`, validation.reason || 'Unknown');
+          }
         }
         
         // Check if approval is required for this command
@@ -773,15 +925,26 @@ export class CommandExecutor extends EventEmitter {
     return new Promise((resolve, reject) => {
       const startTime = Date.now();
       const processId = `proc_${++this.processCounter}`;
+      const workingDirectory = options.cwd || process.cwd();
       
       let stdout = '';
       let stderr = '';
       let timedOut = false;
       let killed = false;
+      let signalCode: NodeJS.Signals | null = null;
+      
+      // Create command context for error reporting
+      const commandContext = {
+        command,
+        args,
+        workingDirectory,
+        environment: options.env,
+        timeout: options.timeout
+      };
       
       // Spawn the process
       const child = spawn(command, args, {
-        cwd: options.cwd || process.cwd(),
+        cwd: workingDirectory,
         env: options.env || process.env,
         stdio: ['pipe', 'pipe', 'pipe'],
         shell: process.platform === 'win32' // Use shell on Windows for better command resolution
@@ -790,14 +953,39 @@ export class CommandExecutor extends EventEmitter {
       // Track active process
       this.activeProcesses.set(processId, child);
       
-      // Set up timeout
+      // Set up timeout with enhanced error handling
       const timeoutHandle = setTimeout(() => {
+        const executionTime = Date.now() - startTime;
         timedOut = true;
+        
+        // Create process state for timeout error
+        const processState: ProcessState = {
+          pid: child.pid,
+          spawnfile: child.spawnfile,
+          spawnargs: child.spawnargs,
+          killed: false,
+          exitCode: null,
+          signalCode: null
+        };
+        
+        // Log timeout with detailed context
+        this.logger.warn('CommandExecutor', 'Command timeout, attempting graceful termination', 'spawnProcess', {
+          command,
+          args,
+          executionTime,
+          timeout: options.timeout,
+          pid: child.pid
+        });
+        
         this.killProcess(processId, 'SIGTERM');
         
         // Force kill after 5 seconds if still running
         setTimeout(() => {
           if (this.activeProcesses.has(processId)) {
+            this.logger.warn('CommandExecutor', 'Graceful termination failed, force killing process', 'spawnProcess', {
+              command,
+              pid: child.pid
+            });
             this.killProcess(processId, 'SIGKILL');
           }
         }, 5000);
@@ -819,6 +1007,42 @@ export class CommandExecutor extends EventEmitter {
         this.activeProcesses.delete(processId);
         
         const executionTime = Date.now() - startTime;
+        signalCode = signal;
+        
+        // Check if this was a timeout that completed
+        if (timedOut) {
+          const processState: ProcessState = {
+            pid: child.pid,
+            spawnfile: child.spawnfile,
+            spawnargs: child.spawnargs,
+            killed: killed,
+            exitCode: code,
+            signalCode: signal
+          };
+          
+          const timeoutError = CommandExecutionError.fromTimeout(
+            command,
+            args,
+            workingDirectory,
+            options.timeout,
+            executionTime,
+            processState,
+            stdout,
+            stderr
+          );
+          
+          this.logger.error('CommandExecutor', 'Command timed out', 'spawnProcess', {
+            command,
+            executionTime,
+            timeout: options.timeout,
+            exitCode: code,
+            signal,
+            errorDetails: timeoutError.errorDetails
+          });
+          
+          reject(timeoutError);
+          return;
+        }
         
         this.logger.info('CommandExecutor', 'Command completed', 'spawnProcess', {
           command,
@@ -837,34 +1061,61 @@ export class CommandExecutor extends EventEmitter {
           executionTime,
           timedOut,
           killed,
-          pid: child.pid
+          pid: child.pid,
+          commandContext
         };
+        
+        // Add error details for non-zero exit codes
+        if (code !== 0 && !timedOut && !killed) {
+          result.errorDetails = {
+            message: `Command failed with exit code ${code}`,
+            category: 'execution',
+            command,
+            args,
+            workingDirectory,
+            code: `EXIT_CODE_${code}`,
+            suggestedAction: stderr ? 'Check stderr output for detailed error information' : 'Check command syntax and arguments'
+          };
+        }
         
         resolve(result);
       });
       
-      // Handle process errors
-      child.on('error', (error) => {
+      // Handle process spawn errors with enhanced error details
+      child.on('error', (error: NodeJS.ErrnoException) => {
         clearTimeout(timeoutHandle);
         this.activeProcesses.delete(processId);
         
-        this.logger.error('CommandExecutor', 'Command execution error', 'spawnProcess', {
+        const spawnError = CommandExecutionError.fromSpawnError(
+          error,
           command,
-          error: error.message
-        });
-        
-        reject(new CommandExecutionError(
-          `Command execution failed: ${error.message}`,
-          null,
+          args,
+          workingDirectory,
           stdout,
           stderr
-        ));
+        );
+        
+        // Log with full context
+        this.logger.error('CommandExecutor', 'Command spawn failed', 'spawnProcess', {
+          command,
+          args,
+          workingDirectory,
+          error: error.message,
+          errno: error.errno,
+          code: error.code,
+          syscall: error.syscall,
+          path: error.path,
+          errorDetails: spawnError.errorDetails
+        });
+        
+        reject(spawnError);
       });
       
       // Handle kill events
       child.on('exit', (code, signal) => {
         if (signal) {
           killed = true;
+          signalCode = signal;
         }
       });
     });
@@ -886,15 +1137,26 @@ export class CommandExecutor extends EventEmitter {
     return new Promise((resolve, reject) => {
       const startTime = Date.now();
       const processId = `proc_${++this.processCounter}`;
+      const workingDirectory = options.cwd || process.cwd();
       
       let stdout = '';
       let stderr = '';
       let timedOut = false;
       let killed = false;
+      let signalCode: NodeJS.Signals | null = null;
+      
+      // Create command context for error reporting
+      const commandContext = {
+        command,
+        args,
+        workingDirectory,
+        environment: options.env,
+        timeout: options.timeout
+      };
       
       // Spawn the process
       const child = spawn(command, args, {
-        cwd: options.cwd || process.cwd(),
+        cwd: workingDirectory,
         env: options.env || process.env,
         stdio: ['pipe', 'pipe', 'pipe'],
         shell: process.platform === 'win32'
@@ -903,13 +1165,27 @@ export class CommandExecutor extends EventEmitter {
       // Track active process
       this.activeProcesses.set(processId, child);
       
-      // Set up timeout
+      // Set up timeout with enhanced error handling
       const timeoutHandle = setTimeout(() => {
+        const executionTime = Date.now() - startTime;
         timedOut = true;
+        
+        this.logger.warn('CommandExecutor', 'Streaming command timeout, attempting graceful termination', 'spawnProcessStreaming', {
+          command,
+          args,
+          executionTime,
+          timeout: options.timeout,
+          pid: child.pid
+        });
+        
         this.killProcess(processId, 'SIGTERM');
         
         setTimeout(() => {
           if (this.activeProcesses.has(processId)) {
+            this.logger.warn('CommandExecutor', 'Streaming command graceful termination failed, force killing', 'spawnProcessStreaming', {
+              command,
+              pid: child.pid
+            });
             this.killProcess(processId, 'SIGKILL');
           }
         }, 5000);
@@ -935,6 +1211,42 @@ export class CommandExecutor extends EventEmitter {
         this.activeProcesses.delete(processId);
         
         const executionTime = Date.now() - startTime;
+        signalCode = signal;
+        
+        // Check if this was a timeout that completed
+        if (timedOut) {
+          const processState: ProcessState = {
+            pid: child.pid,
+            spawnfile: child.spawnfile,
+            spawnargs: child.spawnargs,
+            killed: killed,
+            exitCode: code,
+            signalCode: signal
+          };
+          
+          const timeoutError = CommandExecutionError.fromTimeout(
+            command,
+            args,
+            workingDirectory,
+            options.timeout,
+            executionTime,
+            processState,
+            stdout,
+            stderr
+          );
+          
+          this.logger.error('CommandExecutor', 'Streaming command timed out', 'spawnProcessStreaming', {
+            command,
+            executionTime,
+            timeout: options.timeout,
+            exitCode: code,
+            signal,
+            errorDetails: timeoutError.errorDetails
+          });
+          
+          reject(timeoutError);
+          return;
+        }
         
         this.logger.info('CommandExecutor', 'Streaming command completed', 'spawnProcessStreaming', {
           command,
@@ -946,38 +1258,66 @@ export class CommandExecutor extends EventEmitter {
           pid: child.pid
         });
         
-        resolve({
+        const result: CommandResult = {
           exitCode: code,
           stdout,
           stderr,
           executionTime,
           timedOut,
           killed,
-          pid: child.pid
-        });
+          pid: child.pid,
+          commandContext
+        };
+        
+        // Add error details for non-zero exit codes
+        if (code !== 0 && !timedOut && !killed) {
+          result.errorDetails = {
+            message: `Streaming command failed with exit code ${code}`,
+            category: 'execution',
+            command,
+            args,
+            workingDirectory,
+            code: `EXIT_CODE_${code}`,
+            suggestedAction: stderr ? 'Check streamed stderr output for detailed error information' : 'Check command syntax and arguments'
+          };
+        }
+        
+        resolve(result);
       });
       
-      // Handle errors
-      child.on('error', (error) => {
+      // Handle spawn errors with enhanced error details
+      child.on('error', (error: NodeJS.ErrnoException) => {
         clearTimeout(timeoutHandle);
         this.activeProcesses.delete(processId);
         
-        this.logger.error('CommandExecutor', 'Streaming command error', 'spawnProcessStreaming', {
+        const spawnError = CommandExecutionError.fromSpawnError(
+          error,
           command,
-          error: error.message
-        });
-        
-        reject(new CommandExecutionError(
-          `Command execution failed: ${error.message}`,
-          null,
+          args,
+          workingDirectory,
           stdout,
           stderr
-        ));
+        );
+        
+        this.logger.error('CommandExecutor', 'Streaming command spawn failed', 'spawnProcessStreaming', {
+          command,
+          args,
+          workingDirectory,
+          error: error.message,
+          errno: error.errno,
+          code: error.code,
+          syscall: error.syscall,
+          path: error.path,
+          errorDetails: spawnError.errorDetails
+        });
+        
+        reject(spawnError);
       });
       
       child.on('exit', (code, signal) => {
         if (signal) {
           killed = true;
+          signalCode = signal;
         }
       });
     });

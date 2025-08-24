@@ -94,6 +94,7 @@ export interface JobRecord {
   errorCode?: string;              // Categorized error code
   retryCount?: number;             // Number of retry attempts
   canRetry?: boolean;              // Whether retry is possible
+  detailedError?: JobDetailedError; // Enhanced error information
 }
 
 /**
@@ -202,6 +203,14 @@ export interface JobResultResponse {
   completedAt: number;
   hasMoreOutput?: boolean;        // Whether output was truncated
   outputFiles?: string[];         // Paths to additional output files
+  errorDetails?: JobDetailedError; // Enhanced error information
+  commandContext?: {              // Command execution context
+    command: string;
+    args: string[];
+    workingDirectory: string;
+    environment?: Record<string, string>;
+    timeout: number;
+  };
 }
 
 /**
@@ -254,7 +263,37 @@ export interface PollingCondition {
 }
 
 /**
- * Error Classification
+ * Enhanced Error Information for Jobs
+ */
+export interface JobDetailedError {
+  message: string;
+  code?: string;
+  category: 'spawn' | 'execution' | 'timeout' | 'approval' | 'system';
+  command: string;
+  args: string[];
+  workingDirectory: string;
+  systemError?: {
+    errno?: number;
+    code?: string;
+    syscall?: string;
+    path?: string;
+  };
+  processState?: {
+    pid?: number;
+    spawnfile: string;
+    spawnargs: string[];
+    killed: boolean;
+    exitCode: number | null;
+    signalCode: string | null;
+  };
+  environmentContext?: Record<string, string>;
+  suggestedAction?: string;
+  originalError?: string;
+  timestamp: number;
+}
+
+/**
+ * Error Classification (Legacy - keeping for backward compatibility)
  */
 export interface JobError {
   code: string;                   // ERROR_APPROVAL_TIMEOUT, ERROR_EXECUTION_FAILED
@@ -356,6 +395,7 @@ export type JobUpdate = Partial<Pick<JobRecord,
   | "killed"
   | "pid"
   | "executionToken"
+  | "detailedError"
 >>;
 
 // Constants for configuration
