@@ -950,6 +950,15 @@ export class CommandExecutor extends EventEmitter {
         shell: process.platform === 'win32' // Use shell on Windows for better command resolution
       });
       
+      // IMMEDIATELY set up data listeners to prevent race conditions
+      child.stdout?.on('data', (data) => {
+        stdout += data.toString();
+      });
+      
+      child.stderr?.on('data', (data) => {
+        stderr += data.toString();
+      });
+      
       // Track active process
       this.activeProcesses.set(processId, child);
       
@@ -990,16 +999,6 @@ export class CommandExecutor extends EventEmitter {
           }
         }, 5000);
       }, options.timeout);
-      
-      // Collect stdout
-      child.stdout?.on('data', (data) => {
-        stdout += data.toString();
-      });
-      
-      // Collect stderr
-      child.stderr?.on('data', (data) => {
-        stderr += data.toString();
-      });
       
       // Handle process completion
       child.on('close', (code, signal) => {
@@ -1162,6 +1161,19 @@ export class CommandExecutor extends EventEmitter {
         shell: process.platform === 'win32'
       });
       
+      // IMMEDIATELY set up data listeners to prevent race conditions
+      child.stdout?.on('data', (data) => {
+        const chunk = data.toString();
+        stdout += chunk;
+        onOutput(chunk, 'stdout');
+      });
+      
+      child.stderr?.on('data', (data) => {
+        const chunk = data.toString();
+        stderr += chunk;
+        onOutput(chunk, 'stderr');
+      });
+      
       // Track active process
       this.activeProcesses.set(processId, child);
       
@@ -1190,20 +1202,6 @@ export class CommandExecutor extends EventEmitter {
           }
         }, 5000);
       }, options.timeout);
-      
-      // Stream stdout with callback
-      child.stdout?.on('data', (data) => {
-        const chunk = data.toString();
-        stdout += chunk;
-        onOutput(chunk, 'stdout');
-      });
-      
-      // Stream stderr with callback
-      child.stderr?.on('data', (data) => {
-        const chunk = data.toString();
-        stderr += chunk;
-        onOutput(chunk, 'stderr');
-      });
       
       // Handle completion
       child.on('close', (code, signal) => {
